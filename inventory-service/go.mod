@@ -7,7 +7,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/spf13/viper v1.21.0
 	go.opentelemetry.io/proto/otlp v1.4.0
-	go.uber.org/zap v1.27.0
+	go.uber.org/zap v1.28.0
 	google.golang.org/grpc v1.79.3
 )
 
