@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
@@ -15,7 +15,7 @@ WORKDIR /app
 
 # Install production deps only
 COPY package*.json ./
-RUN npm install --production
+RUN npm ci --omit=dev
 
 # Install openssl and zip for certificate generation and bundling
 RUN apk add --no-cache openssl zip
