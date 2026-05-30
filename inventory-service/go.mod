@@ -4,7 +4,7 @@ go 1.26.3
 
 require (
 	github.com/gin-gonic/gin v1.10.0
-	github.com/mattn/go-sqlite3 v1.14.24
+	github.com/mattn/go-sqlite3 v1.14.44
 	github.com/spf13/viper v1.21.0
 	go.opentelemetry.io/proto/otlp v1.4.0
 	go.uber.org/zap v1.27.0
