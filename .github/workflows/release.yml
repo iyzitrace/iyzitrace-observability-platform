@@ -130,7 +130,7 @@ jobs:
       - name: Show release contents
         run: ls -la dist/
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: bundle-v${{ needs.validate.outputs.version }}
           name: bundle v${{ needs.validate.outputs.version }}
