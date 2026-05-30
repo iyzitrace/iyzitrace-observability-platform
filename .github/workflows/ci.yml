@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  go:
+    name: Go tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - cli
+          - inventory-service
+          - opamp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module }}/go.mod
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test ./...
+
+  auth-service:
+    name: Auth service build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: auth-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: auth-service/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  platform-validation:
+    name: Platform validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Generate local Compose secrets
+        run: python3 setup/generate_credentials.py
+      - name: Docker Compose config
+        run: docker compose config --quiet
+      - name: Helm dependency update
+        run: helm dependency update helm/iyzitrace-platform
+      - name: Helm lint
+        run: helm lint helm/iyzitrace-platform
+      - name: Helm template
+        run: helm template iyzitrace helm/iyzitrace-platform --namespace iyzitrace > /tmp/iyzitrace-platform.yaml
+      - name: OpenAPI validation
+        run: |
+          npx --yes @redocly/cli bundle docs/platform-api.openapi.yaml --output /tmp/platform-api.json
+          npx --yes @redocly/cli bundle auth-service/platform-api.openapi.yaml --output /tmp/auth-platform-api.json
+      - name: Bundle smoke test
+        run: make bundle
+      - name: Binary asset check
+        run: sh scripts/check-binary-assets.sh
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: auth-service
+            context: ./auth-service
+            dockerfile: ./auth-service/Dockerfile
+          - service: inventory-service
+            context: ./inventory-service
+            dockerfile: ./inventory-service/Dockerfile
+          - service: opamp
+            context: ./opamp
+            dockerfile: ./opamp/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          tags: iyzitrace/${{ matrix.service }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  security:
+    name: Security and license checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secret scan
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo" \
+            zricethezav/gitleaks:v8.24.3 \
+            detect --no-git --source /repo --verbose
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL,HIGH
+      - name: License notice guard
+        run: test -f LICENSE && test -f NOTICE && test -f THIRD_PARTY_NOTICES.md

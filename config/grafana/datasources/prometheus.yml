@@ -1,0 +1,21 @@
+ apiVersion: 1
+
+ datasources:
+   - name: Prometheus (Observability Platform)
+     type: prometheus
+     uid: prometheus-platform
+     access: proxy
+     orgId: 1
+     url: http://host.docker.internal/query/v1/metrics/
+     basicAuth: false
+     isDefault: false
+     version: 1
+     editable: true
+     jsonData:
+       httpMethod: GET
+       promRegistryOverrides:
+         metrics:
+           traces_spanmetrics_calls_total: iyzitrace_span_metrics_calls_total
+           traces_spanmetrics_latency_sum: iyzitrace_span_metrics_duration_milliseconds_sum
+           traces_spanmetrics_latency_count: iyzitrace_span_metrics_duration_milliseconds_count
+           traces_spanmetrics_latency_bucket: iyzitrace_span_metrics_duration_milliseconds_bucket

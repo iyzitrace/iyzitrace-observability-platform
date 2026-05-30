@@ -1,0 +1,21 @@
+dependencies:
+- name: tempo-distributed
+  repository: https://grafana.github.io/helm-charts
+  version: 1.61.3
+- name: loki
+  repository: https://grafana.github.io/helm-charts
+  version: 6.53.0
+- name: prometheus
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 28.9.1
+- name: thanos
+  repository: https://charts.bitnami.com/bitnami
+  version: 17.3.1
+- name: seaweedfs
+  repository: https://seaweedfs.github.io/seaweedfs/helm
+  version: 4.16.0
+- name: opentelemetry-operator
+  repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  version: 0.105.1
+digest: sha256:75698dbb76dfb34a3cc86c057e97cab9ea0409c2384c933d1c35a370704ab56e
+generated: "2026-03-11T10:55:40.901542+01:00"

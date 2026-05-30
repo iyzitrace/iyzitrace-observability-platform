@@ -1,0 +1,50 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "github-actions"]
+
+  - package-ecosystem: "docker"
+    directory: "/auth-service"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: "docker"
+    directory: "/inventory-service"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: "docker"
+    directory: "/opamp"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+
+  - package-ecosystem: "npm"
+    directory: "/auth-service"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "npm"]
+
+  - package-ecosystem: "gomod"
+    directory: "/cli"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "go"]
+
+  - package-ecosystem: "gomod"
+    directory: "/inventory-service"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "go"]
+
+  - package-ecosystem: "gomod"
+    directory: "/opamp"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "go"]
+

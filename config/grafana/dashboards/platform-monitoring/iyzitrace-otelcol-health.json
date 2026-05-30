@@ -1,0 +1,272 @@
+{
+  "uid": "iyzitrace-otelcol-health",
+  "title": "iyzitrace · OTel Collector Health",
+  "description": "The observability platform's own pulse. Receivers, processors, exporters, queues, errors, and the collector's own runtime — all the signals that tell you whether your telemetry pipeline is delivering or silently dropping data. If this dashboard goes red, every other dashboard becomes a lie.",
+  "tags": ["otel", "collector", "platform", "iyzitrace", "infrastructure"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-1h", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "agent_group", "label": "Agent group", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(otelcol_process_uptime_seconds_total, agent_group_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}},
+    {"name": "agent", "label": "Agent", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(otelcol_process_uptime_seconds_total{agent_group_name=~\"${agent_group:regex}\"}, agent_id)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "Pipeline pulse — is data flowing?", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "Active collectors",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "count(count by (agent_id) (otelcol_process_uptime_seconds_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}))"}]
+    },
+    {"id": 2, "type": "stat", "title": "Spans accepted / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(otelcol_receiver_accepted_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 3, "type": "stat", "title": "Metrics accepted / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 4, "type": "stat", "title": "Logs accepted / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(otelcol_receiver_accepted_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 5, "type": "stat", "title": "Refused / sec",
+      "description": "Items the receivers couldn't accept. Sustained > 0 = upstream backpressure or auth failures.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(otelcol_receiver_refused_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval])) + sum(rate(otelcol_receiver_refused_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval])) + sum(rate(otelcol_receiver_refused_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 6, "type": "stat", "title": "Send failures / sec",
+      "description": "Items exporters tried and failed to send downstream. > 0 sustained = silent telemetry loss.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(otelcol_exporter_send_failed_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval])) + sum(rate(otelcol_exporter_send_failed_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval])) + sum(rate(otelcol_exporter_send_failed_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))"}]
+    },
+
+    {"id": 200, "type": "row", "title": "Receivers — incoming telemetry", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}},
+
+    {"id": 10, "type": "timeseries", "title": "Receiver throughput by signal",
+      "description": "Spans + metric points + log records accepted, by receiver type.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 16, "x": 0, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (receiver) (rate(otelcol_receiver_accepted_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "spans · {{receiver}}"},
+        {"refId": "B", "expr": "sum by (receiver) (rate(otelcol_receiver_accepted_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "metrics · {{receiver}}"},
+        {"refId": "C", "expr": "sum by (receiver) (rate(otelcol_receiver_accepted_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "logs · {{receiver}}"}
+      ]
+    },
+    {"id": 11, "type": "timeseries", "title": "Receiver refused / failed",
+      "description": "Refused = back-pressured. Failed = couldn't deserialize / auth.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 8, "x": 16, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.1}]}, "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 70}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["sum", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(otelcol_receiver_refused_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "refused spans/s"},
+        {"refId": "B", "expr": "sum(rate(otelcol_receiver_refused_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "refused metrics/s"},
+        {"refId": "C", "expr": "sum(rate(otelcol_receiver_refused_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "refused logs/s"},
+        {"refId": "D", "expr": "sum(rate(otelcol_receiver_failed_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "failed spans/s"},
+        {"refId": "E", "expr": "sum(rate(otelcol_receiver_failed_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "failed metrics/s"},
+        {"refId": "F", "expr": "sum(rate(otelcol_receiver_failed_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "failed logs/s"}
+      ]
+    },
+
+    {"id": 300, "type": "row", "title": "Exporters — outgoing telemetry", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}},
+
+    {"id": 20, "type": "timeseries", "title": "Exporter throughput by destination",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 16, "x": 0, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (exporter) (rate(otelcol_exporter_sent_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "spans · {{exporter}}"},
+        {"refId": "B", "expr": "sum by (exporter) (rate(otelcol_exporter_sent_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "metrics · {{exporter}}"},
+        {"refId": "C", "expr": "sum by (exporter) (rate(otelcol_exporter_sent_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "logs · {{exporter}}"}
+      ]
+    },
+    {"id": 21, "type": "timeseries", "title": "Send failures by exporter",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 8, "x": 16, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "red", "value": 0.1}]}, "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 70}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["sum", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "spans · {{exporter}}"},
+        {"refId": "B", "expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "metrics · {{exporter}}"},
+        {"refId": "C", "expr": "sum by (exporter) (rate(otelcol_exporter_send_failed_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "logs · {{exporter}}"}
+      ]
+    },
+
+    {"id": 400, "type": "row", "title": "Exporter queue health", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25}},
+
+    {"id": 30, "type": "timeseries", "title": "Queue size vs capacity",
+      "description": "When queue size approaches capacity, the next overflow drops data. Queue full = silent loss.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 26},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "capacity.*"}, "properties": [{"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [5,5]}}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}, {"id": "custom.fillOpacity", "value": 0}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (exporter) (otelcol_exporter_queue_size{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"})", "legendFormat": "size · {{exporter}}"},
+        {"refId": "B", "expr": "sum by (exporter) (otelcol_exporter_queue_capacity{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"})", "legendFormat": "capacity · {{exporter}}"}
+      ]
+    },
+    {"id": 31, "type": "timeseries", "title": "Queue utilization %",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 26},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "orange", "value": 0.8}, {"color": "red", "value": 0.95}]}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "thresholdsStyle": {"mode": "dashed"}}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (exporter) (otelcol_exporter_queue_size{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}) / clamp_min(sum by (exporter) (otelcol_exporter_queue_capacity{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}), 1)", "legendFormat": "{{exporter}}"}]
+    },
+    {"id": 32, "type": "timeseries", "title": "Exporter batch size — items/batch",
+      "description": "How many items each exporter ships per batch. Tiny batches = chatty network; huge ones = high tail latency.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 35},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 5}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (exporter) (rate(otelcol_exporter_queue_batch_send_size_sum{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval])) / clamp_min(sum by (exporter) (rate(otelcol_exporter_queue_batch_send_size_count{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval])), 1)", "legendFormat": "items/batch · {{exporter}}"}]
+    },
+
+    {"id": 500, "type": "row", "title": "Pipeline integrity — accepted vs sent (drop detector)", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 43}},
+
+    {"id": 40, "type": "timeseries", "title": "Spans: accepted vs sent — gap = pipeline drop",
+      "description": "Gap between accepted (top of pipeline) and sent (out of pipeline) reveals where data leaks. Persistent positive gap = something in the middle is silently dropping.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 8, "x": 0, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "accepted/s"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byName", "options": "sent/s"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(otelcol_receiver_accepted_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "accepted/s"},
+        {"refId": "B", "expr": "sum(rate(otelcol_exporter_sent_spans_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "sent/s"}
+      ]
+    },
+    {"id": 41, "type": "timeseries", "title": "Metrics: accepted vs sent",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 8, "x": 8, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "accepted/s"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byName", "options": "sent/s"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(otelcol_receiver_accepted_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "accepted/s"},
+        {"refId": "B", "expr": "sum(rate(otelcol_exporter_sent_metric_points_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "sent/s"}
+      ]
+    },
+    {"id": 42, "type": "timeseries", "title": "Logs: accepted vs sent",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 8, "x": 16, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "accepted/s"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byName", "options": "sent/s"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(otelcol_receiver_accepted_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "accepted/s"},
+        {"refId": "B", "expr": "sum(rate(otelcol_exporter_sent_log_records_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "sent/s"}
+      ]
+    },
+
+    {"id": 600, "type": "row", "title": "Processor pipeline & batch", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 53}},
+
+    {"id": 50, "type": "timeseries", "title": "Processor incoming vs outgoing items / sec",
+      "description": "Difference reveals filtered/dropped items inside processors.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 54},
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(otelcol_processor_incoming_items_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "incoming/s"},
+        {"refId": "B", "expr": "sum(rate(otelcol_processor_outgoing_items_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "outgoing/s"}
+      ]
+    },
+    {"id": 51, "type": "timeseries", "title": "Batch processor — timeout-triggered sends / sec",
+      "description": "Rate of batches dispatched because the timeout fired (rather than the size limit). High values mean batches aren't filling — under-throughput or undersized traffic.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 54},
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "fixed", "fixedColor": "#FF9830"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum(rate(otelcol_processor_batch_timeout_trigger_send_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "timeout sends/s"}]
+    },
+    {"id": 52, "type": "heatmap", "title": "Processor internal duration heatmap",
+      "description": "Distribution of how long processors take per item.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 63},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "options": {"calculate": false, "yAxis": {"unit": "s", "axisPlacement": "left"}, "color": {"mode": "scheme", "scheme": "Spectral", "steps": 64, "exponent": 0.5, "reverse": true}, "cellGap": 1, "filterValues": {"le": 1e-9}, "tooltip": {"mode": "single", "yHistogram": true, "showColorScale": true}, "legend": {"show": true}, "rowsFrame": {"layout": "auto"}},
+      "targets": [{"refId": "A", "expr": "sum by (le) (rate(otelcol_processor_internal_duration_seconds_bucket{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "{{le}}", "format": "heatmap"}]
+    },
+
+    {"id": 700, "type": "row", "title": "Collector runtime (the collector itself)", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 72}},
+
+    {"id": 60, "type": "timeseries", "title": "Collector RSS",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 73},
+      "fieldConfig": {"defaults": {"unit": "bytes", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "max by (agent_id) (otelcol_process_memory_rss_bytes{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"})", "legendFormat": "{{agent_id}}"}]
+    },
+    {"id": 61, "type": "timeseries", "title": "Collector CPU time / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 73},
+      "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (agent_id) (rate(otelcol_process_cpu_seconds_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "{{agent_id}}"}]
+    },
+    {"id": 62, "type": "timeseries", "title": "Go heap allocation rate",
+      "description": "Bytes allocated per second by the Go runtime. High = GC churn ahead.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 73},
+      "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (agent_id) (rate(otelcol_process_runtime_alloc_bytes_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "legendFormat": "{{agent_id}}"}]
+    },
+
+    {"id": 70, "type": "table", "title": "Collector inventory",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 81},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "Uptime"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+        {"matcher": {"id": "byName", "options": "RSS"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}]},
+        {"matcher": {"id": "byName", "options": "Heap"}, "properties": [{"id": "unit", "value": "bytes"}]},
+        {"matcher": {"id": "byName", "options": "CPU s/s"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 3}]}
+      ]},
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "RSS", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "max by (agent_id, agent_group_name, host_name) (otelcol_process_uptime_seconds_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "B", "expr": "max by (agent_id) (otelcol_process_memory_rss_bytes{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "C", "expr": "max by (agent_id) (otelcol_process_runtime_heap_alloc_bytes{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "D", "expr": "sum by (agent_id) (rate(otelcol_process_cpu_seconds_total{agent_group_name=~\"${agent_group:regex}\", agent_id=~\"${agent:regex}\"}[$__rate_interval]))", "format": "table", "instant": true, "legendFormat": "__auto"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+          "indexByName": {"agent_id": 0, "agent_group_name": 1, "host_name": 2, "Value #A": 3, "Value #B": 4, "Value #C": 5, "Value #D": 6},
+          "renameByName": {"agent_id": "Agent ID", "agent_group_name": "Group", "host_name": "Host", "Value #A": "Uptime", "Value #B": "RSS", "Value #C": "Heap", "Value #D": "CPU s/s"}
+        }}
+      ]
+    }
+  ]
+}

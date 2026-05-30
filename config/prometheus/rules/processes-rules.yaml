@@ -1,0 +1,50 @@
+groups:
+- name: process_inventory_v2
+  interval: 30s
+  rules:
+    # 0) Anchor: 1-valued series per (region, host, process) for stable joins
+    - record: __proc_info_anchor
+      expr: |
+        max by (cloud_region, host_name, process_executable_name, process_pid) (process_uptime_seconds) * 0 + 1
+
+    # 1) Last-seen seconds (based on when we last got a sample of uptime)
+    - record: process_last_seen_seconds
+      expr: |
+        time() - max by (cloud_region, host_name, process_executable_name, process_pid) (
+          timestamp(process_uptime_seconds)
+        )
+
+    # 2) Status classification from last-seen freshness
+    #    Healthy: <=60s; Degraded: (60s, 5m]; Down: >5m
+    - record: inventory_process_status
+      labels: {status: "healthy"}
+      expr: (process_last_seen_seconds <= 60)
+
+    - record: inventory_process_status
+      labels: {status: "degraded"}
+      expr: (process_last_seen_seconds > 60 and process_last_seen_seconds <= 300)
+
+    - record: inventory_process_status
+      labels: {status: "down"}
+      expr: (process_last_seen_seconds > 300)
+
+    # 3) CPU utilization (%)
+    - record: inventory_process_cpu_utilization_percent
+      expr: |
+        (avg by (cloud_region, host_name, process_executable_name, process_pid) (process_cpu_utilization_ratio) * 100)
+          * on (cloud_region, host_name, process_executable_name, process_pid) group_left()
+            __proc_info_anchor
+
+    # 4) Memory utilization (%)
+    - record: inventory_process_memory_utilization_percent
+      expr: |
+        (avg by (cloud_region, host_name, process_executable_name, process_pid) (process_memory_utilization_ratio) * 100)
+          * on (cloud_region, host_name, process_executable_name, process_pid) group_left()
+            __proc_info_anchor
+
+    # 5) Last seen seconds (exposed as its own metric with the same labels)
+    - record: inventory_process_last_seen_seconds
+      expr: |
+        process_last_seen_seconds
+          * on (cloud_region, host_name, process_executable_name, process_pid) group_left()
+            __proc_info_anchor

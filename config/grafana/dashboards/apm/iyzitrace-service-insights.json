@@ -1,0 +1,542 @@
+{
+  "uid": "iyzitrace-service-insights",
+  "title": "iyzitrace · Service Insights (SRE)",
+  "description": "Per-service SRE insights derived from iyzitrace_span_metrics_calls_total and iyzitrace_span_metrics_duration_milliseconds_*. Pick one or more services and drill into RED metrics, top operations, error hotspots, and infrastructure breakdowns.",
+  "tags": ["apm", "iyzitrace", "sre", "red-metrics", "service"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": {"from": "now-1h", "to": "now"},
+  "refresh": "30s",
+  "timepicker": {"refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "1h"]},
+  "annotations": {"list": []},
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"},
+        "hide": 0
+      },
+      {
+        "name": "service",
+        "label": "Service",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": {"qryType": 1, "query": "label_values(iyzitrace_span_metrics_calls_total, service_name)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {"text": "All", "value": "$__all"}
+      },
+      {
+        "name": "span_kind",
+        "label": "Span kind",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": {"qryType": 1, "query": "label_values(iyzitrace_span_metrics_calls_total{service_name=~\"$service\"}, span_kind)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {"text": "All", "value": "$__all"}
+      },
+      {
+        "name": "operation",
+        "label": "Operation",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": {"qryType": 1, "query": "label_values(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\"}, span_name)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {"text": "All", "value": "$__all"}
+      },
+      {
+        "name": "status_code",
+        "label": "Status",
+        "type": "custom",
+        "query": "STATUS_CODE_OK,STATUS_CODE_ERROR,STATUS_CODE_UNSET",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Golden Signals — $service",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}
+    },
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Request rate",
+      "description": "Total calls/sec across selected services, span kinds and operations.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 4, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval]))",
+          "legendFormat": "rps"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Error rate",
+      "description": "Share of calls with status_code=STATUS_CODE_ERROR.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 4, "x": 4, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "background", "graphMode": "area", "justifyMode": "auto", "textMode": "auto"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "min": 0,
+          "max": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "orange", "value": 0.05}, {"color": "red", "value": 0.1}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / clamp_min(sum(rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval])), 1e-9)",
+          "legendFormat": "error %"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Latency p50",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 4, "x": 8, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 1000}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval])))",
+          "legendFormat": "p50"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Latency p95",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 4, "x": 12, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 2000}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval])))",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Latency p99",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 4, "x": 16, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 1,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1000}, {"color": "red", "value": 5000}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Active operations",
+      "description": "Number of distinct span_name values seen with traffic in the current range.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto"},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(sum by (span_name) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval])) > 0)",
+          "legendFormat": "operations"
+        }
+      ]
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Traffic & Errors",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Throughput by status_code",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 7},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {"drawStyle": "bars", "stacking": {"mode": "normal", "group": "A"}, "fillOpacity": 60, "lineWidth": 0}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "STATUS_CODE_ERROR"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+          {"matcher": {"id": "byName", "options": "STATUS_CODE_OK"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+          {"matcher": {"id": "byName", "options": "STATUS_CODE_UNSET"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status_code) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))",
+          "legendFormat": "{{status_code}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Error rate %",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 7},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "orange", "value": 0.05}, {"color": "red", "value": 0.1}]},
+          "custom": {"drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "thresholdsStyle": {"mode": "dashed"}}
+        }
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / clamp_min(sum by (service_name) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval])), 1e-9)",
+          "legendFormat": "{{service_name}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Latency percentiles (p50 / p95 / p99)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "p50"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]},
+          {"matcher": {"id": "byName", "options": "p95"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]},
+          {"matcher": {"id": "byName", "options": "p99"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}
+        ]
+      },
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "heatmap",
+      "title": "Latency distribution (heatmap)",
+      "description": "Bucketed latency over time. Hot horizontal bands = consistent latency tier, vertical streaks = traffic bursts.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "fieldConfig": {"defaults": {"unit": "ms", "custom": {"scaleDistribution": {"type": "linear"}, "hideFrom": {"tooltip": false, "viz": false, "legend": false}}}},
+      "options": {
+        "calculate": false,
+        "yAxis": {"axisPlacement": "left", "unit": "ms", "decimals": 0},
+        "color": {"mode": "scheme", "scheme": "Spectral", "steps": 64, "exponent": 0.5, "reverse": true},
+        "cellGap": 1,
+        "filterValues": {"le": 1e-9},
+        "tooltip": {"mode": "single", "yHistogram": true, "showColorScale": true},
+        "legend": {"show": true},
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "rowsFrame": {"layout": "auto"}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=~\"$status_code\"}[$__rate_interval]))",
+          "legendFormat": "{{le}}",
+          "format": "heatmap"
+        }
+      ]
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Top operations",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23}
+    },
+    {
+      "id": 20,
+      "type": "table",
+      "title": "Operations — RED (rate / errors / p95)",
+      "description": "Top operations by request rate with their error rate and p95 latency.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 24},
+      "fieldConfig": {
+        "defaults": {"custom": {"align": "auto", "displayMode": "auto"}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "rps"}, "properties": [{"id": "unit", "value": "reqps"}, {"id": "decimals", "value": 2}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}]},
+          {"matcher": {"id": "byName", "options": "error %"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "orange", "value": 0.05}, {"color": "red", "value": 0.1}]}}]},
+          {"matcher": {"id": "byName", "options": "p95 (ms)"}, "properties": [{"id": "unit", "value": "ms"}, {"id": "decimals", "value": 1}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 2000}]}}]},
+          {"matcher": {"id": "byName", "options": "p99 (ms)"}, "properties": [{"id": "unit", "value": "ms"}, {"id": "decimals", "value": 1}]}
+        ]
+      },
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "rps", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (service_name, span_name, span_kind) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))", "legendFormat": "__auto", "format": "table", "instant": true},
+        {"refId": "B", "expr": "sum by (service_name, span_name, span_kind) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / clamp_min(sum by (service_name, span_name, span_kind) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval])), 1e-9)", "legendFormat": "__auto", "format": "table", "instant": true},
+        {"refId": "C", "expr": "histogram_quantile(0.95, sum by (service_name, span_name, span_kind, le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval])))", "legendFormat": "__auto", "format": "table", "instant": true},
+        {"refId": "D", "expr": "histogram_quantile(0.99, sum by (service_name, span_name, span_kind, le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval])))", "legendFormat": "__auto", "format": "table", "instant": true}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+            "indexByName": {"service_name": 0, "span_kind": 1, "span_name": 2, "Value #A": 3, "Value #B": 4, "Value #C": 5, "Value #D": 6},
+            "renameByName": {
+              "service_name": "Service",
+              "span_kind": "Kind",
+              "span_name": "Operation",
+              "Value #A": "rps",
+              "Value #B": "error %",
+              "Value #C": "p95 (ms)",
+              "Value #D": "p99 (ms)"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "barchart",
+      "title": "Top 10 operations by error rate %",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 34},
+      "fieldConfig": {
+        "defaults": {"unit": "percentunit", "color": {"mode": "continuous-RdYlGr"}, "custom": {"axisLabel": "", "axisPlacement": "auto"}}
+      },
+      "options": {"orientation": "horizontal", "xTickLabelRotation": 0, "stacking": "none", "showValue": "auto", "barWidth": 0.85, "barRadius": 0, "groupWidth": 0.7, "legend": {"showLegend": false, "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by (service_name, span_name) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / clamp_min(sum by (service_name, span_name) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval])), 1e-9))",
+          "legendFormat": "{{service_name}} · {{span_name}}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "barchart",
+      "title": "Top 10 slowest operations (p95)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 34},
+      "fieldConfig": {
+        "defaults": {"unit": "ms", "color": {"mode": "continuous-RdYlGr", "reverse": true}, "custom": {"axisLabel": "", "axisPlacement": "auto"}}
+      },
+      "options": {"orientation": "horizontal", "xTickLabelRotation": 0, "stacking": "none", "showValue": "auto", "barWidth": 0.85, "barRadius": 0, "groupWidth": 0.7, "legend": {"showLegend": false, "displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (service_name, span_name, le) (rate(iyzitrace_span_metrics_duration_milliseconds_bucket{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))))",
+          "legendFormat": "{{service_name}} · {{span_name}}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 400,
+      "type": "row",
+      "title": "Breakdowns",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 43}
+    },
+    {
+      "id": 30,
+      "type": "piechart",
+      "title": "Calls by span_kind",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "pieType": "donut", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "values": ["percent"]}, "displayLabels": ["percent"]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (span_kind) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))", "legendFormat": "{{span_kind}}"}
+      ]
+    },
+    {
+      "id": 31,
+      "type": "piechart",
+      "title": "Calls by status_code",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": [
+        {"matcher": {"id": "byName", "options": "STATUS_CODE_ERROR"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+        {"matcher": {"id": "byName", "options": "STATUS_CODE_OK"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+        {"matcher": {"id": "byName", "options": "STATUS_CODE_UNSET"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]}
+      ]},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "pieType": "donut", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "values": ["percent"]}, "displayLabels": ["percent"]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (status_code) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))", "legendFormat": "{{status_code}}"}
+      ]
+    },
+    {
+      "id": 32,
+      "type": "piechart",
+      "title": "Calls by service_version",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "pieType": "donut", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "values": ["percent"]}, "displayLabels": ["percent"]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (service_version) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))", "legendFormat": "{{service_version}}"}
+      ]
+    },
+    {
+      "id": 33,
+      "type": "piechart",
+      "title": "Calls by SDK language",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "pieType": "donut", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "values": ["percent"]}, "displayLabels": ["percent"]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (telemetry_sdk_language) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))", "legendFormat": "{{telemetry_sdk_language}}"}
+      ]
+    },
+    {
+      "id": 34,
+      "type": "table",
+      "title": "Calls by host",
+      "description": "Per-host throughput broken down by service — quickly spot a hot or unbalanced instance.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 52},
+      "fieldConfig": {
+        "defaults": {"custom": {"align": "auto", "displayMode": "auto"}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "rps"}, "properties": [{"id": "unit", "value": "reqps"}, {"id": "decimals", "value": 3}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "color", "value": {"mode": "continuous-GrYlRd"}}]}
+        ]
+      },
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "rps", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (host_name, service_name) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\"}[$__rate_interval]))", "legendFormat": "__auto", "format": "table", "instant": true}
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+            "indexByName": {"host_name": 0, "service_name": 1, "Value": 2},
+            "renameByName": {"host_name": "Host", "service_name": "Service", "Value": "rps"}
+          }
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Throughput by HTTP method",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 52},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "stacking": {"mode": "none"}}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (http_method) (rate(iyzitrace_span_metrics_calls_total{service_name=~\"$service\", span_kind=~\"$span_kind\", span_name=~\"$operation\", http_method!=\"\"}[$__rate_interval]))", "legendFormat": "{{http_method}}"}
+      ]
+    }
+  ]
+}

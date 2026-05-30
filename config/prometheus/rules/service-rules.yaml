@@ -1,0 +1,96 @@
+groups:
+- name: service_observability_v1
+  interval: 30s
+  rules:
+    - record: iyzitrace_service_calls_total_5m
+      expr: |
+        sum by (service_name) (
+          increase(iyzitrace_span_metrics_calls_total[5m])
+        )
+
+    - record: iyzitrace_service_requests_per_second_5m
+      expr: |
+        sum by (service_name) (
+          rate(iyzitrace_span_metrics_calls_total[5m])
+        )
+
+    - record: iyzitrace_service_error_calls_total_5m
+      expr: |
+        sum by (service_name) (
+          increase(iyzitrace_span_metrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
+        )
+        OR on(service_name)
+        (iyzitrace_service_calls_total_5m * 0)
+
+    - record: iyzitrace_service_errors_per_second_5m
+      expr: |
+        sum by (service_name) (
+          rate(iyzitrace_span_metrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
+        )
+        OR on(service_name)
+        (iyzitrace_service_requests_per_second_5m * 0)
+
+    - record: iyzitrace_service_success_calls_total_5m
+      expr: |
+        clamp_min(
+          iyzitrace_service_calls_total_5m
+            - iyzitrace_service_error_calls_total_5m,
+          0
+        )
+
+    - record: iyzitrace_service_error_percentage_5m
+      expr: |
+        100 * iyzitrace_service_errors_per_second_5m
+          / clamp_min(iyzitrace_service_requests_per_second_5m, 1e-9)
+
+    - record: iyzitrace_service_duration_milliseconds_sum_per_second_5m
+      expr: |
+        sum by (service_name) (
+          rate(iyzitrace_span_metrics_duration_milliseconds_sum[5m])
+        )
+
+    - record: iyzitrace_service_duration_milliseconds_count_per_second_5m
+      expr: |
+        sum by (service_name) (
+          rate(iyzitrace_span_metrics_duration_milliseconds_count[5m])
+        )
+
+    - record: iyzitrace_service_duration_milliseconds_avg_5m
+      expr: |
+        iyzitrace_service_duration_milliseconds_sum_per_second_5m
+          / clamp_min(iyzitrace_service_duration_milliseconds_count_per_second_5m, 1e-9)
+
+    - record: __iyzitrace_service_duration_milliseconds_bucket_per_second_5m
+      expr: |
+        sum by (service_name, le) (
+          rate(iyzitrace_span_metrics_duration_milliseconds_bucket[5m])
+        )
+
+    - record: iyzitrace_service_duration_milliseconds_p90_5m
+      expr: |
+        histogram_quantile(0.90, __iyzitrace_service_duration_milliseconds_bucket_per_second_5m)
+
+    - record: iyzitrace_service_duration_milliseconds_p95_5m
+      expr: |
+        histogram_quantile(0.95, __iyzitrace_service_duration_milliseconds_bucket_per_second_5m)
+
+    - record: iyzitrace_service_duration_milliseconds_p99_5m
+      expr: |
+        histogram_quantile(0.99, __iyzitrace_service_duration_milliseconds_bucket_per_second_5m)
+
+    - record: iyzitrace_service_apdex_100ms_400ms_5m
+      # Standard Apdex (0–1): (satisfied + tolerating/2) / total
+      # satisfied  = le_100  (requests ≤ T=100ms)
+      # tolerating = le_400 − le_100  (T < x ≤ 4T, using cumulative-histogram difference)
+      # = (le_100 + (le_400 − le_100)/2) / total
+      # = (le_100 + le_400) / 2 / total
+      expr: |
+        (
+          sum by (service_name) (__iyzitrace_service_duration_milliseconds_bucket_per_second_5m{le="100"})
+          + sum by (service_name) (__iyzitrace_service_duration_milliseconds_bucket_per_second_5m{le="400"})
+        ) / 2
+        / clamp_min(iyzitrace_service_duration_milliseconds_count_per_second_5m, 1e-9)
+
+    - record: iyzitrace_service_is_active_5m
+      expr: |
+        iyzitrace_service_calls_total_5m > bool 0

@@ -1,0 +1,183 @@
+{
+  "uid": "iyzitrace-genai-observability",
+  "title": "iyzitrace · GenAI Observability",
+  "description": "OpenTelemetry GenAI semantic-convention metrics: LLM call rate, token consumption (input/output), call duration percentiles, per-model & per-system breakdowns. Auto-discovers any service emitting gen_ai_* metrics. Modern AI cost & performance observability.",
+  "tags": ["genai", "llm", "ai", "iyzitrace", "infrastructure"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-1h", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "service", "label": "Service", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(gen_ai_client_operation_duration_seconds_count, service_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}},
+    {"name": "model", "label": "Model", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(gen_ai_client_operation_duration_seconds_count{service_name=~\"${service:regex}\"}, gen_ai_request_model)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}},
+    {"name": "input_token_price", "label": "Input $/1M tokens", "description": "Optional cost-estimation input. Set to 0 to disable cost panels.", "type": "custom", "query": "0,0.5,1,2,5,10,15", "current": {"text": "0", "value": "0"}},
+    {"name": "output_token_price", "label": "Output $/1M tokens", "type": "custom", "query": "0,1,2,5,10,15,30,60", "current": {"text": "0", "value": "0"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "AI usage pulse", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "LLM calls / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "purple"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(gen_ai_client_operation_duration_seconds_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 2, "type": "stat", "title": "Input tokens / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"input\"}[$__rate_interval]))"}]
+    },
+    {"id": 3, "type": "stat", "title": "Output tokens / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"output\"}[$__rate_interval]))"}]
+    },
+    {"id": 4, "type": "stat", "title": "p95 call duration",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2}, {"color": "orange", "value": 10}, {"color": "red", "value": 30}]}}},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(gen_ai_client_operation_duration_seconds_bucket{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])))"}]
+    },
+    {"id": 5, "type": "stat", "title": "Avg tokens per call",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])) / clamp_min(sum(rate(gen_ai_client_token_usage_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])), 1)"}]
+    },
+    {"id": 6, "type": "stat", "title": "Estimated $/hour",
+      "description": "(input_tokens × input_price + output_tokens × output_price) / 1M, scaled to 1 hour. Set token prices via the variables.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 4, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "orange", "value": 10}, {"color": "red", "value": 100}]}}},
+      "targets": [{"refId": "A", "expr": "(\nsum(rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"input\"}[$__rate_interval])) * ${input_token_price}\n+ sum(rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"output\"}[$__rate_interval])) * ${output_token_price}\n) * 3600 / 1000000"}]
+    },
+
+    {"id": 200, "type": "row", "title": "Throughput & latency", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}},
+
+    {"id": 10, "type": "timeseries", "title": "Calls / sec by model",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (gen_ai_request_model, gen_ai_system) (rate(gen_ai_client_operation_duration_seconds_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval]))", "legendFormat": "{{gen_ai_system}} · {{gen_ai_request_model}}"}]
+    },
+    {"id": 11, "type": "timeseries", "title": "Latency percentiles (p50 / p95 / p99)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 8}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "p50.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p95.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p99.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.50, sum by (le, gen_ai_request_model) (rate(gen_ai_client_operation_duration_seconds_bucket{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])))", "legendFormat": "p50 · {{gen_ai_request_model}}"},
+        {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(gen_ai_client_operation_duration_seconds_bucket{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])))", "legendFormat": "p95 · {{gen_ai_request_model}}"},
+        {"refId": "C", "expr": "histogram_quantile(0.99, sum by (le, gen_ai_request_model) (rate(gen_ai_client_operation_duration_seconds_bucket{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])))", "legendFormat": "p99 · {{gen_ai_request_model}}"}
+      ]
+    },
+    {"id": 12, "type": "heatmap", "title": "Call duration heatmap",
+      "description": "Distribution of LLM call durations over time. Hot bands = consistent latency tiers; vertical streaks = generation outliers.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 15},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "options": {"calculate": false, "yAxis": {"unit": "s", "axisPlacement": "left"}, "color": {"mode": "scheme", "scheme": "Spectral", "steps": 64, "exponent": 0.5, "reverse": true}, "cellGap": 1, "filterValues": {"le": 1e-9}, "tooltip": {"mode": "single", "yHistogram": true, "showColorScale": true}, "legend": {"show": true}, "rowsFrame": {"layout": "auto"}},
+      "targets": [{"refId": "A", "expr": "sum by (le) (rate(gen_ai_client_operation_duration_seconds_bucket{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval]))", "legendFormat": "{{le}}", "format": "heatmap"}]
+    },
+
+    {"id": 300, "type": "row", "title": "Token consumption", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}},
+
+    {"id": 20, "type": "timeseries", "title": "Tokens / sec — input vs output (stacked)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 25},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 0, "fillOpacity": 90, "stacking": {"mode": "normal", "group": "A"}}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "input"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byName", "options": "output"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (gen_ai_token_type) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval]))", "legendFormat": "{{gen_ai_token_type}}"}]
+    },
+    {"id": 21, "type": "timeseries", "title": "Avg tokens per call by model",
+      "description": "(rate of total tokens) / (rate of calls). Useful to spot bloated prompts or runaway generations.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 25},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (gen_ai_request_model) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"input\"}[$__rate_interval])) / clamp_min(sum by (gen_ai_request_model) (rate(gen_ai_client_token_usage_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"input\"}[$__rate_interval])), 1)", "legendFormat": "input · {{gen_ai_request_model}}"},
+        {"refId": "B", "expr": "sum by (gen_ai_request_model) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"output\"}[$__rate_interval])) / clamp_min(sum by (gen_ai_request_model) (rate(gen_ai_client_token_usage_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"output\"}[$__rate_interval])), 1)", "legendFormat": "output · {{gen_ai_request_model}}"}
+      ]
+    },
+    {"id": 22, "type": "heatmap", "title": "Token usage distribution heatmap",
+      "description": "How many tokens each call consumes. Long-tail to the right = some prompts/responses are unusually large.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 34},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "options": {"calculate": false, "yAxis": {"unit": "short", "axisPlacement": "left", "decimals": 0}, "color": {"mode": "scheme", "scheme": "Magma", "steps": 64, "exponent": 0.5, "reverse": true}, "cellGap": 1, "filterValues": {"le": 1e-9}, "tooltip": {"mode": "single", "yHistogram": true, "showColorScale": true}, "legend": {"show": true}, "rowsFrame": {"layout": "auto"}},
+      "targets": [{"refId": "A", "expr": "sum by (le) (rate(gen_ai_client_token_usage_bucket{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval]))", "legendFormat": "{{le}}", "format": "heatmap"}]
+    },
+
+    {"id": 400, "type": "row", "title": "Cost & inventory", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 43}},
+
+    {"id": 30, "type": "timeseries", "title": "Estimated $/hour over time",
+      "description": "Hourly run-rate cost. Set token prices via dashboard variables.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "currencyUSD", "decimals": 4, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "(\nsum by (gen_ai_request_model) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"input\"}[$__rate_interval])) * ${input_token_price}\n+ sum by (gen_ai_request_model) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"output\"}[$__rate_interval])) * ${output_token_price}\n) * 3600 / 1000000", "legendFormat": "{{gen_ai_request_model}}"}]
+    },
+    {"id": 31, "type": "piechart", "title": "Calls by GenAI system",
+      "description": "openai, anthropic, ollama, etc. — which providers are receiving traffic.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 6, "x": 12, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "pieType": "donut", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "values": ["percent", "value"]}, "displayLabels": ["percent"]},
+      "targets": [{"refId": "A", "expr": "sum by (gen_ai_system) (rate(gen_ai_client_operation_duration_seconds_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval]))", "legendFormat": "{{gen_ai_system}}"}]
+    },
+    {"id": 32, "type": "piechart", "title": "Calls by operation",
+      "description": "chat / completion / embedding / etc.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 6, "x": 18, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "reqps"}},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "pieType": "donut", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "values": ["percent"]}, "displayLabels": ["percent"]},
+      "targets": [{"refId": "A", "expr": "sum by (gen_ai_operation_name) (rate(gen_ai_client_operation_duration_seconds_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval]))", "legendFormat": "{{gen_ai_operation_name}}"}]
+    },
+
+    {"id": 40, "type": "table", "title": "Per-model summary",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 53},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "Calls/min"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 1}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}]},
+        {"matcher": {"id": "byName", "options": "Input tok/s"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 1}]},
+        {"matcher": {"id": "byName", "options": "Output tok/s"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 1}]},
+        {"matcher": {"id": "byName", "options": "p95 (s)"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 2}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2}, {"color": "red", "value": 10}]}}]},
+        {"matcher": {"id": "byName", "options": "$/h est."}, "properties": [{"id": "unit", "value": "currencyUSD"}, {"id": "decimals", "value": 4}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 10}]}}]}
+      ]},
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "Calls/min", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (gen_ai_system, gen_ai_request_model, service_name) (rate(gen_ai_client_operation_duration_seconds_count{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])) * 60", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "B", "expr": "sum by (gen_ai_system, gen_ai_request_model, service_name) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"input\"}[$__rate_interval]))", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "C", "expr": "sum by (gen_ai_system, gen_ai_request_model, service_name) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"output\"}[$__rate_interval]))", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "D", "expr": "histogram_quantile(0.95, sum by (gen_ai_system, gen_ai_request_model, service_name, le) (rate(gen_ai_client_operation_duration_seconds_bucket{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\"}[$__rate_interval])))", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "E", "expr": "(sum by (gen_ai_system, gen_ai_request_model, service_name) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"input\"}[$__rate_interval])) * ${input_token_price} + sum by (gen_ai_system, gen_ai_request_model, service_name) (rate(gen_ai_client_token_usage_sum{service_name=~\"${service:regex}\", gen_ai_request_model=~\"${model:regex}\", gen_ai_token_type=\"output\"}[$__rate_interval])) * ${output_token_price}) * 3600 / 1000000", "format": "table", "instant": true, "legendFormat": "__auto"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+          "indexByName": {"gen_ai_system": 0, "gen_ai_request_model": 1, "service_name": 2, "Value #A": 3, "Value #B": 4, "Value #C": 5, "Value #D": 6, "Value #E": 7},
+          "renameByName": {"gen_ai_system": "Provider", "gen_ai_request_model": "Model", "service_name": "Caller", "Value #A": "Calls/min", "Value #B": "Input tok/s", "Value #C": "Output tok/s", "Value #D": "p95 (s)", "Value #E": "$/h est."}
+        }}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+groups:
+- name: service_alerting_v1
+  interval: 30s
+  rules:
+    - alert: ServiceHighErrorRate
+      expr: |
+        iyzitrace_service_error_percentage_5m > 5
+          and on (service_name) iyzitrace_service_calls_total_5m > 20
+      for: 10m
+      labels:
+        severity: warning
+        category: service
+      annotations:
+        summary: Service {{ $labels.service_name }} has elevated error rate
+        description: Service {{ $labels.service_name }} error percentage has been above 5% for 10 minutes with at least 20 calls over the last 5 minutes.
+
+    - alert: ServiceHighLatencyP95
+      expr: |
+        iyzitrace_service_duration_milliseconds_p95_5m > 1000
+          and on (service_name) iyzitrace_service_calls_total_5m > 20
+      for: 10m
+      labels:
+        severity: warning
+        category: service
+      annotations:
+        summary: Service {{ $labels.service_name }} has high p95 latency
+        description: Service {{ $labels.service_name }} p95 latency has been above 1000ms for 10 minutes with at least 20 calls over the last 5 minutes.
+
+    - alert: ServiceApdexLow
+      expr: |
+        iyzitrace_service_apdex_100ms_400ms_5m < 0.85
+          and on (service_name) iyzitrace_service_calls_total_5m > 20
+      for: 10m
+      labels:
+        severity: warning
+        category: service
+      annotations:
+        summary: Service {{ $labels.service_name }} has low Apdex
+        description: Service {{ $labels.service_name }} Apdex has stayed below 0.85 for 10 minutes with at least 20 calls over the last 5 minutes.
+
+    - alert: ServiceTrafficDropped
+      expr: |
+        iyzitrace_service_requests_per_second_5m
+          < 0.2 * iyzitrace_service_requests_per_second_5m offset 1h
+          and on (service_name) iyzitrace_service_calls_total_5m offset 1h > 50
+      for: 15m
+      labels:
+        severity: warning
+        category: service
+      annotations:
+        summary: Service {{ $labels.service_name }} traffic dropped sharply
+        description: Service {{ $labels.service_name }} current request rate is below 20% of its rate one hour ago and the service handled at least 50 calls in that earlier 5 minute window.
+
+    # Fires for any service that goes completely silent after showing sustained traffic.
+    # To restrict to specific services, replace .+ with a pipe-delimited name list,
+    # e.g. service_name=~"checkout-service|payment-service"
+    - alert: ServiceNoTraffic
+      expr: |
+        iyzitrace_service_calls_total_5m{service_name=~".+"} == 0
+          and on (service_name) iyzitrace_service_calls_total_5m{service_name=~".+"} offset 1h > 50
+      for: 15m
+      labels:
+        severity: warning
+        category: service
+      annotations:
+        summary: Service {{ $labels.service_name }} has no traffic
+        description: Service {{ $labels.service_name }} has had no calls for 15 minutes after showing at least 50 calls in the equivalent window one hour ago.

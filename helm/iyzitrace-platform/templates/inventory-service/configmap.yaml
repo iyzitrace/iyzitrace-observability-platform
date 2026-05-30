@@ -1,0 +1,55 @@
+{{- if .Values.inventoryService.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "iyzitrace.inventoryServiceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "inventory-service") | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      host: {{ .Values.inventoryService.config.server.host | quote }}
+      port: {{ .Values.inventoryService.config.server.port }}
+
+    otlp:
+      enabled: {{ .Values.inventoryService.config.otlp.enabled }}
+      grpc_address: {{ .Values.inventoryService.config.otlp.grpc_address | quote }}
+      http_address: {{ .Values.inventoryService.config.otlp.http_address | quote }}
+
+    storage:
+      type: {{ .Values.inventoryService.config.storage.type | quote }}
+      db_path: {{ .Values.inventoryService.config.storage.db_path | quote }}
+
+    pipeline:
+      enabled: {{ .Values.inventoryService.config.pipeline.enabled }}
+      workers: {{ .Values.inventoryService.config.pipeline.workers }}
+      batch_size: {{ .Values.inventoryService.config.pipeline.batch_size }}
+      flush_interval: {{ .Values.inventoryService.config.pipeline.flush_interval }}
+      channel_size: {{ .Values.inventoryService.config.pipeline.channel_size }}
+      cache_ttl: {{ .Values.inventoryService.config.pipeline.cache_ttl }}
+
+    semconv:
+      version: {{ .Values.inventoryService.config.semconv.version | quote }}
+
+    log:
+      level: {{ .Values.inventoryService.config.log.level | quote }}
+      format: {{ .Values.inventoryService.config.log.format | quote }}
+---
+{{- if .Values.inventoryService.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "iyzitrace.inventoryServiceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "inventory-service") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.inventoryService.persistence.storageClass }}
+  storageClassName: {{ .Values.inventoryService.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.inventoryService.persistence.size }}
+{{- end }}
+{{- end }}

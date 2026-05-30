@@ -1,0 +1,95 @@
+name: Publish Images And Chart
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  docker-images:
+    name: Publish ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: auth-service
+            context: ./auth-service
+            dockerfile: ./auth-service/Dockerfile
+          - service: inventory-service
+            context: ./inventory-service
+            dockerfile: ./inventory-service/Dockerfile
+          - service: opamp
+            context: ./opamp
+            dockerfile: ./opamp/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,format=short
+      - name: Build local image for scan
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: ${{ matrix.service }}:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.service }}:scan
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  helm-chart:
+    name: Publish Helm chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Log in to GHCR OCI
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+      - name: Update dependencies
+        run: helm dependency update helm/iyzitrace-platform
+      - name: Lint
+        run: helm lint helm/iyzitrace-platform
+      - name: Package
+        run: helm package helm/iyzitrace-platform --destination .helm-package
+      - name: Push
+        run: |
+          chart_package="$(ls .helm-package/*.tgz)"
+          helm push "$chart_package" oci://${{ env.REGISTRY }}/${{ github.repository_owner }}/charts

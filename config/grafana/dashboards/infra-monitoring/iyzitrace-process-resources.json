@@ -1,0 +1,176 @@
+{
+  "uid": "iyzitrace-process-resources",
+  "title": "iyzitrace · Process Resources",
+  "description": "Cross-runtime process telemetry — CPU, RSS/VMS memory, disk I/O, file descriptors, threads, context switches, uptime. Works for any service that emits process_* (any language). Filter the Service variable to scope.",
+  "tags": ["runtime", "process", "infrastructure", "iyzitrace"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-1h", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "service", "label": "Service", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(process_memory_usage_bytes{service_name!=\"\"}, service_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "Process pulse", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "Tracked processes",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "count(count by (service_name) (process_memory_usage_bytes{service_name=~\"${service:regex}\"}))"}]
+    },
+    {"id": 2, "type": "stat", "title": "Aggregate RSS",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 4, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "yellow"}}},
+      "targets": [{"refId": "A", "expr": "sum(process_memory_usage_bytes{service_name=~\"${service:regex}\"})"}]
+    },
+    {"id": 3, "type": "stat", "title": "Aggregate CPU time / sec",
+      "description": "Sum of all selected processes' CPU time per second. > 1 means multi-core utilization in aggregate.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 9, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(process_cpu_time_seconds_total{service_name=~\"${service:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 4, "type": "stat", "title": "Open file descriptors",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 14, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "purple"}}},
+      "targets": [{"refId": "A", "expr": "sum(process_open_file_descriptor_count{service_name=~\"${service:regex}\"})"}]
+    },
+    {"id": 5, "type": "stat", "title": "Total threads",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 19, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "sum(process_thread_count{service_name=~\"${service:regex}\"})"}]
+    },
+
+    {"id": 200, "type": "row", "title": "CPU", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}},
+
+    {"id": 10, "type": "timeseries", "title": "CPU utilization per service",
+      "description": "process_cpu_utilization_ratio. 1.0 = one core fully busy.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "min": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "avg by (service_name) (process_cpu_utilization_ratio{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 11, "type": "timeseries", "title": "CPU time / sec — user vs system",
+      "description": "Different SDKs label CPU state differently (state, type, process_cpu_state). This panel sums all states per service.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (rate(process_cpu_time_seconds_total{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{service_name}}"}]
+    },
+
+    {"id": 300, "type": "row", "title": "Memory", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}},
+
+    {"id": 20, "type": "timeseries", "title": "Resident memory (RSS) per service",
+      "description": "Physical memory in use. Plot includes services emitting process_memory_usage_bytes.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "bytes", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (process_memory_usage_bytes{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 21, "type": "timeseries", "title": "Virtual memory (VMS) per service",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "bytes", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (process_memory_virtual_bytes{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 22, "type": "timeseries", "title": "Memory utilization ratio",
+      "description": "process_memory_utilization_ratio — RSS / available. > 0.8 = service is stretching its container limit.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 25},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "orange", "value": 0.85}, {"color": "red", "value": 0.95}]}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "thresholdsStyle": {"mode": "dashed"}}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "avg by (service_name) (process_memory_utilization_ratio{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+
+    {"id": 400, "type": "row", "title": "Disk I/O", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 33}},
+
+    {"id": 30, "type": "timeseries", "title": "Disk I/O — read vs write per service",
+      "description": "process_disk_io_bytes split by direction.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 34},
+      "fieldConfig": {"defaults": {"unit": "Bps", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "read.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byRegexp", "options": "write.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name, direction) (rate(process_disk_io_bytes_total{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{direction}} · {{service_name}}"}]
+    },
+    {"id": 31, "type": "timeseries", "title": "Disk read/write totals per service",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 34},
+      "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (rate(process_disk_io_bytes_total{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{service_name}}"}]
+    },
+
+    {"id": 500, "type": "row", "title": "Threads, FDs, context switches & uptime", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 43}},
+
+    {"id": 40, "type": "timeseries", "title": "Threads per service",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (process_thread_count{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 41, "type": "timeseries", "title": "Open file descriptors",
+      "description": "Steady growth = FD leak (forgot to close socket / file).",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (process_open_file_descriptor_count{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 42, "type": "timeseries", "title": "Context switches / sec — voluntary vs involuntary",
+      "description": "Involuntary spikes = CPU contention (other tenants steal cycles). Voluntary growth = lots of blocking syscalls.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 44},
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "voluntary.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]},
+        {"matcher": {"id": "byRegexp", "options": "involuntary.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (type) (rate(process_context_switches_total{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{type}}"}]
+    },
+
+    {"id": 43, "type": "table", "title": "Process inventory (current state)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 52},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "RSS"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}]},
+        {"matcher": {"id": "byName", "options": "FDs"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 0}]},
+        {"matcher": {"id": "byName", "options": "Threads"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 0}]},
+        {"matcher": {"id": "byName", "options": "Uptime"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+        {"matcher": {"id": "byName", "options": "CPU %"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 0.9}]}}]}
+      ]},
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "RSS", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (service_name, telemetry_sdk_language) (process_memory_usage_bytes{service_name=~\"${service:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "B", "expr": "sum by (service_name) (process_open_file_descriptor_count{service_name=~\"${service:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "C", "expr": "sum by (service_name) (process_thread_count{service_name=~\"${service:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "D", "expr": "max by (service_name) (process_uptime_seconds{service_name=~\"${service:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "E", "expr": "avg by (service_name) (process_cpu_utilization_ratio{service_name=~\"${service:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+          "indexByName": {"service_name": 0, "telemetry_sdk_language": 1, "Value #A": 2, "Value #C": 3, "Value #B": 4, "Value #E": 5, "Value #D": 6},
+          "renameByName": {"service_name": "Service", "telemetry_sdk_language": "Lang", "Value #A": "RSS", "Value #B": "FDs", "Value #C": "Threads", "Value #D": "Uptime", "Value #E": "CPU %"}
+        }}
+      ]
+    }
+  ]
+}

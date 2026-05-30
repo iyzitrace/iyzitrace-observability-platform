@@ -1,0 +1,118 @@
+{{- if .Values.authService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "iyzitrace.authServiceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "auth-service") | nindent 4 }}
+spec:
+  replicas: {{ .Values.authService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "auth-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "auth-service") | nindent 8 }}
+    spec:
+      containers:
+        - name: auth-service
+          image: "{{ .Values.authService.image.repository }}:{{ .Values.authService.image.tag }}"
+          imagePullPolicy: {{ .Values.authService.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.authService.service.port }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.authService.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iyzitrace.s3SecretName" . }}
+                  key: JWT_SECRET
+            - name: LOKI_HEALTH_URL
+              value: "http://{{ include "iyzitrace.lokiEndpoint" . }}/loki/api/v1/status/buildinfo"
+            - name: LOKI_METRICS_URL
+              value: "http://{{ include "iyzitrace.lokiEndpoint" . }}"
+            - name: TEMPO_HEALTH_URL
+              value: "http://{{ include "iyzitrace.tempoQueryEndpoint" . }}/api/status/buildinfo"
+            - name: TEMPO_METRICS_URL
+              value: "http://{{ include "iyzitrace.tempoQueryEndpoint" . }}"
+            - name: PROMETHEUS_HEALTH_URL
+              value: "http://{{ include "iyzitrace.prometheusEndpoint" . }}/api/v1/status/buildinfo"
+            - name: PROMETHEUS_METRICS_URL
+              value: "http://{{ include "iyzitrace.prometheusEndpoint" . }}"
+            - name: SEAWEEDFS_HEALTH_URL
+              value: "http://{{ include "iyzitrace.seaweedfsMasterEndpoint" . }}/cluster/status"
+            - name: SEAWEEDFS_DIR_STATUS_URL
+              value: "http://{{ include "iyzitrace.seaweedfsMasterEndpoint" . }}/dir/status"
+            - name: LOG_COLLECTOR_HEALTH_URL
+              value: "http://{{ include "iyzitrace.logCollectorExtensionEndpoint" . }}/"
+            - name: LOG_COLLECTOR_METRICS_URL
+              value: "http://{{ include "iyzitrace.logCollectorMonitoringEndpoint" . }}"
+            - name: METRIC_COLLECTOR_HEALTH_URL
+              value: "http://{{ include "iyzitrace.metricCollectorExtensionEndpoint" . }}/"
+            - name: METRIC_COLLECTOR_METRICS_URL
+              value: "http://{{ include "iyzitrace.metricCollectorMonitoringEndpoint" . }}"
+            - name: TRACE_COLLECTOR_HEALTH_URL
+              value: "http://{{ include "iyzitrace.traceCollectorExtensionEndpoint" . }}/"
+            - name: TRACE_COLLECTOR_METRICS_URL
+              value: "http://{{ include "iyzitrace.traceCollectorMonitoringEndpoint" . }}"
+            - name: OPAMP_SERVER_HEALTH_URL
+              value: "http://{{ include "iyzitrace.lawrenceName" . }}:{{ .Values.lawrence.service.httpPort }}/health"
+            - name: OPAMP_SERVER_METRICS_URL
+              value: "http://{{ include "iyzitrace.lawrenceName" . }}:{{ .Values.lawrence.service.httpPort }}/metrics"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: tls
+              mountPath: /etc/nginx/certs
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.authService.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.authService.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "iyzitrace.authServiceName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: tls
+          secret:
+            secretName: {{ include "iyzitrace.tlsSecretName" . }}
+            optional: true
+---
+{{- if .Values.authService.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "iyzitrace.authServiceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "auth-service") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.authService.persistence.storageClass }}
+  storageClassName: {{ .Values.authService.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.authService.persistence.size }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,56 @@
+{{- if .Values.lawrence.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "iyzitrace.lawrenceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "lawrence") | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      http_port: {{ .Values.lawrence.config.server.http_port }}
+      opamp_port: {{ .Values.lawrence.config.server.opamp_port }}
+
+    otlp:
+      grpc_endpoint: {{ .Values.lawrence.config.otlp.grpc_endpoint | quote }}
+      http_endpoint: {{ .Values.lawrence.config.otlp.http_endpoint | quote }}
+      agent_grpc_endpoint: {{ .Values.lawrence.config.otlp.agent_grpc_endpoint | quote }}
+      agent_http_endpoint: {{ .Values.lawrence.config.otlp.agent_http_endpoint | quote }}
+
+    app_storage:
+      type: {{ .Values.lawrence.config.app_storage.type }}
+      path: {{ .Values.lawrence.config.app_storage.path }}
+
+    external_platform:
+      prometheus_url: "http://{{ include "iyzitrace.thanosQueryEndpoint" . }}"
+      loki_url: "http://{{ include "iyzitrace.lokiEndpoint" . }}"
+      tempo_url: "http://{{ include "iyzitrace.tempoQueryEndpoint" . }}"
+      otlp_exporter_url: "http://iyzitrace-log-enrichment-collector:4318"
+
+    logging:
+      level: {{ .Values.lawrence.config.logging.level }}
+      format: {{ .Values.lawrence.config.logging.format }}
+
+    worker:
+      queue_size: {{ .Values.lawrence.config.worker.queue_size }}
+      workers: {{ .Values.lawrence.config.worker.workers }}
+      timeout: {{ .Values.lawrence.config.worker.timeout }}
+---
+{{- if .Values.lawrence.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "iyzitrace.lawrenceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "lawrence") | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- if .Values.lawrence.persistence.storageClass }}
+  storageClassName: {{ .Values.lawrence.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.lawrence.persistence.size }}
+{{- end }}
+{{- end }}

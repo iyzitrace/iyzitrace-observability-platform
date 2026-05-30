@@ -1,0 +1,14 @@
+apiVersion: 1
+
+folders:
+  - title: Infrastructure Monitoring Dashboards
+    uid: infra-monitoring
+    orgId: 1
+
+  - title: Application Performance Monitoring
+    uid: apm
+    orgId: 1
+
+  - title: Platform Monitoring
+    uid: platform-monitoring
+    orgId: 1

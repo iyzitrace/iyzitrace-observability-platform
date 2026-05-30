@@ -1,0 +1,262 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+        max_recv_msg_size_mib: 4
+        max_concurrent_streams: 100
+      http:
+        endpoint: 0.0.0.0:4318
+        max_request_body_size: 4194304
+
+exporters:
+  otlp_grpc:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 1000
+
+  otlp_grpc/metric:
+    endpoint: metric-otel-enrichment:14317
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 1000
+
+  otlp_grpc/inventory:
+    endpoint: inventory-service:4317
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      num_consumers: 10
+      queue_size: 500
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # Resource enrichment — stamps collector identity
+  resource/add_collector:
+    attributes:
+      - key: collector.name
+        value: trace-otel-enrichment
+        action: upsert
+      - key: collector.pipeline
+        value: traces
+        action: upsert
+
+  transform/type_classifier:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          # ------------------------------------------------------------
+          # 0. Initialize
+          # ------------------------------------------------------------
+          - set(attributes["type"], "unknown") where attributes["type"] == nil
+
+          # ------------------------------------------------------------
+          # 1. Strong protocol / dependency classifiers
+          #    Order matters: specific before generic
+          # ------------------------------------------------------------
+
+          # HTTP
+          - set(attributes["type"], "http")
+            where attributes["type"] == "unknown" and (
+              attributes["http.method"] != nil or
+              attributes["http.request.method"] != nil or
+              attributes["http.url"] != nil or
+              attributes["url.full"] != nil or
+              attributes["server.address"] != nil and attributes["http.route"] != nil or
+              attributes["http.target"] != nil or
+              attributes["http.scheme"] != nil or
+              attributes["network.protocol.name"] == "http"
+            )
+
+          # RPC / gRPC
+          - set(attributes["type"], "rpc")
+            where attributes["type"] == "unknown" and (
+              attributes["rpc.system"] != nil or
+              attributes["rpc.service"] != nil or
+              attributes["rpc.method"] != nil
+            )
+
+          # Messaging
+          - set(attributes["type"], "messaging")
+            where attributes["type"] == "unknown" and (
+              attributes["messaging.system"] != nil or
+              attributes["messaging.destination.name"] != nil or
+              attributes["messaging.operation"] != nil
+            )
+
+          # Cache first, before generic database
+          - set(attributes["type"], "cache")
+            where attributes["type"] == "unknown" and (
+              attributes["db.system"] == "redis" or
+              attributes["db.system"] == "memcached"
+            )
+
+          # Database
+          - set(attributes["type"], "database")
+            where attributes["type"] == "unknown" and (
+              attributes["db.system"] != nil or
+              attributes["db.namespace"] != nil or
+              attributes["db.operation.name"] != nil or
+              attributes["db.operation"] != nil or
+              attributes["db.collection.name"] != nil or
+              attributes["db.sql.table"] != nil
+            )
+
+          # ------------------------------------------------------------
+          # 2. Framework/internal runtime classifiers
+          #    These are internal spans created by frameworks/runtime
+          # ------------------------------------------------------------
+          - set(attributes["type"], "framework")
+            where attributes["type"] == "unknown" and (
+              attributes["next.span_type"] != nil or
+              IsMatch(name, ".*executing api route.*") or
+              IsMatch(name, ".*middleware.*") or
+              IsMatch(name, ".*router.*") or
+              IsMatch(name, ".*render.*") or
+              IsMatch(name, ".*framework.*")
+            )
+
+          # ------------------------------------------------------------
+          # 3. Application/business/internal classifiers
+          #    Fallback for internal spans that represent app logic
+          # ------------------------------------------------------------
+
+          # Explicit operation/domain hint
+          - set(attributes["type"], "app")
+            where attributes["type"] == "unknown" and (
+              attributes["operation.name"] != nil or
+              attributes["product.id"] != nil or
+              attributes["user.id"] != nil or
+              attributes["order.id"] != nil or
+              attributes["cart.id"] != nil
+            )
+
+          # Business/use-case naming patterns
+          - set(attributes["type"], "app")
+            where attributes["type"] == "unknown" and (
+              IsMatch(name, "^user_.*") or
+              IsMatch(name, "^(get|list|fetch|load|create|update|delete|process|handle|calculate|validate|enrich|sync)_[a-zA-Z0-9_]+$") or
+              IsMatch(name, "^(get|list|fetch|load|create|update|delete|process|handle|calculate|validate|enrich|sync)[A-Z].*")
+            )
+
+          # Generic fallback for remaining internal spans
+          # Adjust SpanKind value if your collector uses enum names differently.
+          - set(attributes["type"], "app")
+            where attributes["type"] == "unknown" and span.kind == SPAN_KIND_INTERNAL
+
+          # ------------------------------------------------------------
+          # 4. Optional: role/subtype enrichment
+          # ------------------------------------------------------------
+
+          # Scenario / synthetic-user style root action
+          - set(attributes["app.role"], "scenario")
+            where attributes["type"] == "app" and IsMatch(name, "^user_.*")
+
+          # More specific app subtype for CRUD-ish business ops
+          - set(attributes["app.subtype"], "workflow")
+            where attributes["type"] == "app" and (
+              IsMatch(name, "^(get|list|fetch|load|create|update|delete|process|handle|calculate|validate|enrich|sync).*")
+            )
+
+          # Framework route handler hint
+          - set(attributes["framework.role"], "route_handler")
+            where attributes["type"] == "framework" and (
+              attributes["next.span_type"] != nil or
+              IsMatch(name, ".*api route.*")
+            )
+
+  transform/span:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(span.attributes["operation.name"], span.name)
+          - set(span.attributes["host.name"], resource.attributes["host.name"]) where resource.attributes["host.name"] != nil
+
+connectors:
+  spanmetrics:
+    exemplars:
+      enabled: true
+    resource_metrics_cache_size: 1600
+    dimensions:
+      - name: type
+      - name: host.name
+    events:
+      enabled: true
+      dimensions:
+        - name: exception.type
+        - name: exception.message
+    metrics_flush_interval: 10s
+  servicegraph:
+    metrics_flush_interval: 10s
+    store:
+      ttl: 30s
+      max_items: 10000
+    dimensions:
+      - type
+    virtual_node_peer_attributes:
+      - db.system
+      - messaging.system
+      - peer.service
+      - server.address
+      - net.peer.name
+    virtual_node_extra_label: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: "0.0.0.0"
+                port: 8888
+  extensions: [health_check, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/add_collector, transform/type_classifier, transform/span, batch]
+      exporters: [otlp_grpc, otlp_grpc/inventory, spanmetrics, servicegraph]
+    metrics:
+      receivers: [spanmetrics, servicegraph]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/metric]

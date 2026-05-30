@@ -1,0 +1,50 @@
+ANALYSIS.md
+.DS_Store
+# IDEs
+.vscode/
+.idea/
+
+# Node
+node_modules/
+dist/
+!auth-service/ui/dist/
+npm-debug.log
+
+# Go
+opamp/lawrence
+go-build-cache/
+go-mod-cache/
+.cache/
+
+# Data Volumes (if mapped locally)
+lawrence-data/
+loki-data/
+tempo-data/
+seaweedfs-data/
+auth-data/
+auth-service/data/
+data/
+
+# Certificates (Generated)
+nginx/certs/*.crt
+nginx/certs/*.key
+nginx/certs/*.srl
+nginx/certs/*.csr
+nginx/certs/*.pfx
+!nginx/certs/.gitkeep
+config/nginx/certs/*
+!config/nginx/certs/.gitkeep
+!config/nginx/certs/README.md
+
+# Environment
+.env
+data
+
+.secrets.env
+config/seaweedfs/s3.json
+config/loki/config.yaml
+config/tempo/config.yaml
+config/thanos/bucket.yaml
+
+*.tgz
+cli/bin/iyzitrace

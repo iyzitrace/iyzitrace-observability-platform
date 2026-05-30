@@ -1,0 +1,78 @@
+{{- if .Values.lawrence.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "iyzitrace.lawrenceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "lawrence") | nindent 4 }}
+spec:
+  replicas: {{ .Values.lawrence.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "lawrence") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "lawrence") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/lawrence/configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: lawrence
+          image: "{{ .Values.lawrence.image.repository }}:{{ .Values.lawrence.image.tag }}"
+          imagePullPolicy: {{ .Values.lawrence.image.pullPolicy }}
+          command: ["./lawrence", "--config", "/app/config.yaml"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.lawrence.service.httpPort }}
+              protocol: TCP
+            - name: opamp
+              containerPort: {{ .Values.lawrence.service.opampPort }}
+              protocol: TCP
+            - name: otlp-http
+              containerPort: {{ .Values.lawrence.service.otlpHttpPort }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.lawrence.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "iyzitrace.s3SecretName" . }}
+                  key: JWT_SECRET
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.lawrence.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "iyzitrace.lawrenceName" . }}
+        - name: data
+          {{- if .Values.lawrence.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "iyzitrace.lawrenceName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

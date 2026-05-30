@@ -1,0 +1,55 @@
+# Alertmanager configuration for iyzitrace
+#
+# Default behaviour: alerts are captured, deduplicated, and visible in the
+# Alertmanager UI at /alertmanager on the platform console.  No external
+# notifications are sent until you configure a receiver below.
+#
+# To add notifications, replace the 'null' receiver or add new receivers and
+# update the route tree.  Common examples are commented out below.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  group_by: ['alertname', 'service_name', 'category']
+  group_wait: 30s        # wait before sending the first alert in a group
+  group_interval: 5m     # wait before sending new alerts in the same group
+  repeat_interval: 4h    # resend a still-firing alert after this duration
+  receiver: 'null'
+
+  # Add child routes here to send specific alert categories to different
+  # receivers, e.g.:
+  #
+  # routes:
+  #   - matchers: [severity="critical"]
+  #     receiver: pagerduty
+  #   - matchers: [category="service"]
+  #     receiver: slack-ops
+
+receivers:
+  - name: 'null'
+    # No external notifications — alerts are visible in the UI only.
+    # Replace with your notification targets, for example:
+    #
+    # slack_configs:
+    #   - api_url: 'https://hooks.slack.com/services/T.../B.../...'
+    #     channel: '#alerts'
+    #     title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+    #     text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    #
+    # pagerduty_configs:
+    #   - routing_key: '<your-integration-key>'
+    #
+    # email_configs:
+    #   - to: 'team@example.com'
+    #     from: 'alertmanager@iyzitrace'
+    #     smarthost: 'smtp.example.com:587'
+    #     auth_username: 'alertmanager@iyzitrace'
+    #     auth_password: '<password>'
+
+inhibit_rules:
+  # Suppress warning-level alerts for a service when a critical alert is
+  # already firing for the same service — avoids alert storms.
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: ['service_name']

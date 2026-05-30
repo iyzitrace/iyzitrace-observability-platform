@@ -1,0 +1,125 @@
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+  log_level: info
+  http_server_read_timeout: 30s
+  http_server_write_timeout: 30s
+  http_server_idle_timeout: 2m
+  grpc_server_max_concurrent_streams: 1000
+  grpc_server_max_recv_msg_size: 16777216
+  grpc_server_max_send_msg_size: 16777216
+
+query_frontend:
+  # Keep search and trace query SLAs predictable
+  max_outstanding_per_tenant: 2048
+  max_retries: 3
+  max_query_expression_size_bytes: 131072
+  search:
+    concurrent_jobs: 200
+    target_bytes_per_job: 67108864
+    default_result_limit: 20
+    max_result_limit: 1000
+    max_duration: 168h
+    duration_slo: 5s
+    throughput_bytes_slo: 1.073741824e+09
+    metadata_slo:
+      duration_slo: 5s
+      throughput_bytes_slo: 1.073741824e+09
+  trace_by_id:
+    duration_slo: 5s
+
+distributor:
+  retry_after_on_resource_exhausted: 1s
+  max_attribute_bytes: 2048
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  # Keep fewer active traces in memory and cut fewer, larger blocks for object storage.
+  concurrent_flushes: 8
+  flush_check_period: 10s
+  trace_idle_period: 10s
+  trace_live_period: 30s
+  max_block_bytes: 104857600   # 100 MiB target block size
+  max_block_duration: 30m
+  complete_block_timeout: 1h
+
+querier:
+  search:
+    query_timeout: 60s
+  trace_by_id:
+    query_timeout: 15s
+  max_concurrent_queries: 16
+
+compactor:
+  compaction:
+    # Retain traces for 7d by default; tune per environment/SLO
+    block_retention: 168h
+
+overrides:
+  defaults:
+    ingestion:
+      rate_strategy: local
+      rate_limit_bytes: 25000000
+      burst_size_bytes: 50000000
+      max_traces_per_user: 20000
+      retry_info_enabled: true
+    read:
+      max_bytes_per_tag_values_query: 5000000
+    global:
+      max_bytes_per_trace: 15000000
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: tempo-data
+      endpoint: seaweedfs:8333
+      region: us-east-1
+      insecure: true
+      access_key: "${TEMPO_ACCESS_KEY}"
+      secret_key: "${TEMPO_SECRET_KEY}"
+      forcepathstyle: true
+      list_blocks_concurrency: 10
+    wal:
+      path: /var/tempo/wal # WAL needs fast local disk or volume
+      v2_encoding: snappy
+      version: vParquet4
+      ingestion_time_range_slack: 2m
+    local:
+      path: /var/tempo/blocks # Local block cache
+    block:
+      bloom_filter_false_positive: 0.01
+      version: vParquet4
+      search_encoding: snappy
+      v2_encoding: zstd
+      search_page_size_bytes: 1048576
+      v2_index_downsample_bytes: 1048576
+      v2_index_page_size_bytes: 256000
+      parquet_row_group_size_bytes: 100000000
+      parquet_dedicated_columns:
+        - scope: resource
+          name: service.name
+          type: string
+        - scope: resource
+          name: service.namespace
+          type: string
+        - scope: span
+          name: http.method
+          type: string
+        - scope: span
+          name: db.system
+          type: string
+        - scope: span
+          name: messaging.system
+          type: string
+    pool:
+      max_workers: 100
+      queue_depth: 20000

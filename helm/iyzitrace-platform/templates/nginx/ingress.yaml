@@ -1,0 +1,41 @@
+{{- if and .Values.nginx.enabled .Values.nginx.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "iyzitrace.nginxName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "nginx") | nindent 4 }}
+  {{- if .Values.nginx.ingress.annotations }}
+  annotations:
+    {{- toYaml .Values.nginx.ingress.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.nginx.ingress.className }}
+  ingressClassName: {{ .Values.nginx.ingress.className | quote }}
+  {{- end }}
+  rules:
+    {{- range .Values.nginx.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "iyzitrace.nginxName" $ }}
+                port:
+                  number: {{ .port }}
+          {{- end }}
+    {{- end }}
+  {{- if .Values.nginx.ingress.tls }}
+  tls:
+    {{- range .Values.nginx.ingress.tls }}
+    - secretName: {{ .secretName | quote }}
+      hosts:
+        {{- range .hosts }}
+        - {{ . | quote }}
+        {{- end }}
+    {{- end }}
+  {{- end }}
+{{- end }}

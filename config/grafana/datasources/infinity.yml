@@ -1,0 +1,17 @@
+apiVersion: 1
+
+datasources:
+  - name: OpAMP Agents API
+    type: yesoreyeram-infinity-datasource
+    uid: opamp-agents-api
+    access: proxy
+    orgId: 1
+    url: http://host.docker.internal/api/v1/platform/opamp
+    basicAuth: false
+    isDefault: false
+    version: 1
+    editable: true
+    jsonData:
+      tlsSkipVerify: true
+      allowedHosts:
+        - http://host.docker.internal

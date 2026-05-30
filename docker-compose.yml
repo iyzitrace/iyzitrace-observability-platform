@@ -1,0 +1,369 @@
+name: iyzitrace
+
+networks:
+  iyzitrace-network:
+    driver: bridge
+
+services:
+  ########################
+  # Backing data stores  #
+  ########################
+
+  tempo:
+    image: ${TEMPO_IMAGE:-grafana/tempo:2.10.1}
+    container_name: iyz-tempo
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    volumes:
+      - ./config/tempo/config.yaml:/etc/tempo/config.yaml:ro
+      - ${DATA_DIR:-./data}/tempo:/var/tempo
+    ports:
+      - "3200"
+      - "4317"
+    networks: [iyzitrace-network]
+    depends_on:
+      seaweedfs-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:3.6.6}
+    container_name: iyz-loki
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./config/loki/config.yaml:/etc/loki/config.yaml:ro
+      - ${DATA_DIR:-./data}/loki:/loki
+    ports:
+      - "3100"
+    networks: [iyzitrace-network]
+    depends_on:
+      seaweedfs-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE:-chrislusf/seaweedfs:4.13}
+    container_name: iyz-seaweedfs
+    command: "server -s3 -s3.config=/etc/seaweedfs/s3.json -dir=/data -metricsPort=9327"
+    volumes:
+      - ${DATA_DIR:-./data}/seaweedfs:/data
+      - ./config/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    ports:
+      - "8333"
+      - "9333"
+      - "9327"
+    networks: [iyzitrace-network]
+    healthcheck:
+      test: ["CMD", "curl", "-sS", "-o", "/dev/null", "http://127.0.0.1:8333"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    restart: unless-stopped
+
+  seaweedfs-init:
+    image: amazon/aws-cli:2.33.27
+    container_name: iyz-seaweedfs-init
+    env_file: [.secrets.env]
+    environment:
+      - AWS_DEFAULT_REGION=us-east-1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        export AWS_ACCESS_KEY_ID=$${TEMPO_ACCESS_KEY}
+        export AWS_SECRET_ACCESS_KEY=$${TEMPO_SECRET_KEY}
+        echo "waiting for seaweedfs..."
+        sleep 5
+        aws --endpoint-url http://seaweedfs:8333 s3 mb s3://tempo-data || true
+        aws --endpoint-url http://seaweedfs:8333 s3 mb s3://loki-data || true
+        aws --endpoint-url http://seaweedfs:8333 s3 mb s3://thanos-time-series || true
+        aws --endpoint-url http://seaweedfs:8333 s3 ls
+    networks: [iyzitrace-network]
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.5.0}
+    container_name: iyz-prometheus
+    command:
+      - --config.file=/etc/prometheus/config.yaml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2h
+      - --storage.tsdb.min-block-duration=2h
+      - --storage.tsdb.max-block-duration=2h
+      - --web.enable-lifecycle
+      - --web.route-prefix=/
+      - --web.enable-otlp-receiver
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./config/prometheus/config.yaml:/etc/prometheus/config.yaml:ro
+      - ./config/prometheus/rules:/etc/prometheus/rules:ro
+      - ${DATA_DIR:-./data}/prometheus:/prometheus
+    ports:
+      - "9090"
+    networks: [iyzitrace-network]
+    depends_on:
+      seaweedfs:
+        condition: service_healthy
+    restart: unless-stopped
+
+  alertmanager:
+    image: ${ALERTMANAGER_IMAGE:-prom/alertmanager:v0.27.0}
+    container_name: iyz-alertmanager
+    command:
+      - --config.file=/etc/alertmanager/config.yaml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+    volumes:
+      - ./config/alertmanager/config.yaml:/etc/alertmanager/config.yaml:ro
+      - ${DATA_DIR:-./data}/alertmanager:/alertmanager
+    ports:
+      - "9093"
+    networks: [iyzitrace-network]
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+  thanos-sidecar:
+    image: ${THANOS_IMAGE:-quay.io/thanos/thanos:v0.32.5}
+    container_name: iyz-thanos-sidecar
+    command:
+      - sidecar
+      - --tsdb.path=/prometheus
+      - --prometheus.url=http://prometheus:9090
+      - --objstore.config-file=/etc/thanos/bucket.yaml
+    volumes:
+      - ${DATA_DIR:-./data}/prometheus:/prometheus
+      - ./config/thanos/bucket.yaml:/etc/thanos/bucket.yaml:ro
+    networks: [iyzitrace-network]
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+  thanos-query:
+    image: ${THANOS_IMAGE:-quay.io/thanos/thanos:v0.32.5}
+    container_name: iyz-thanos-query
+    command:
+      - query
+      - --http-address=0.0.0.0:9091
+      - --endpoint=thanos-sidecar:10901
+      - --endpoint=thanos-store:10901
+    ports:
+      - "9091"
+    networks: [iyzitrace-network]
+    depends_on: [thanos-sidecar, thanos-store]
+    restart: unless-stopped
+
+  thanos-store:
+    image: ${THANOS_IMAGE:-quay.io/thanos/thanos:v0.32.5}
+    container_name: iyz-thanos-store
+    user: root
+    command:
+      - store
+      - --data-dir=/data
+      - --objstore.config-file=/etc/thanos/bucket.yaml
+    volumes:
+      - ./config/thanos/bucket.yaml:/etc/thanos/bucket.yaml:ro
+      - ${DATA_DIR:-./data}/thanos-store:/data
+    networks: [iyzitrace-network]
+    depends_on:
+      seaweedfs-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  thanos-compactor:
+    image: ${THANOS_IMAGE:-quay.io/thanos/thanos:v0.32.5}
+    container_name: iyz-thanos-compactor
+    user: root
+    command:
+      - compact
+      - --data-dir=/data
+      - --objstore.config-file=/etc/thanos/bucket.yaml
+      - --retention.resolution-raw=14d
+      - --retention.resolution-5m=90d
+      - --retention.resolution-1h=1y
+      - --wait
+    volumes:
+      - ./config/thanos/bucket.yaml:/etc/thanos/bucket.yaml:ro
+      - ${DATA_DIR:-./data}/thanos-compactor:/data
+    networks: [iyzitrace-network]
+    depends_on:
+      seaweedfs-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  ########################
+  # Custom services      #
+  ########################
+
+  lawrence:
+    image: ${LAWRENCE_IMAGE:-}
+    build:
+      context: ${LAWRENCE_BUILD:-./opamp}
+    container_name: iyz-lawrence
+    command: ["./lawrence", "--config", "/app/config.yaml"]
+    environment:
+      - GIN_MODE=release
+      - CGO_ENABLED=1
+      - TZ=UTC
+    volumes:
+      - ${DATA_DIR:-./data}/lawrence:/app/data
+      - ./config/lawrence/config.yaml:/app/config.yaml:ro
+    ports:
+      - "8080"
+      - "4320"
+    networks: [iyzitrace-network]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  auth-service:
+    image: ${AUTH_IMAGE:-}
+    build:
+      context: ${AUTH_BUILD:-./auth-service}
+    container_name: iyz-auth-service
+    env_file: [.secrets.env]
+    environment:
+      - PORT=8080
+      - DB_PATH=/app/data/auth.db
+      - UV_THREADPOOL_SIZE=64
+    volumes:
+      - ${DATA_DIR:-./data}/auth:/app/data
+      - ${CERTS_DIR:-./config/nginx/certs}:/etc/nginx/certs
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080"
+    networks: [iyzitrace-network]
+    restart: always
+
+  init-certs:
+    image: alpine:3.21
+    container_name: iyz-init-certs
+    volumes:
+      - ${CERTS_DIR:-./config/nginx/certs}:/certs
+    command: >
+      /bin/sh -c "
+        if [ ! -f /certs/server.crt ]; then
+          echo 'No certificates found. Generating bootstrap certificates...';
+          apk add --no-cache openssl;
+          openssl genrsa -out /certs/ca.key 2048;
+          openssl req -x509 -new -nodes -key /certs/ca.key -sha256 -days 3650 -out /certs/ca.crt -subj '/CN=IyziTrace-Bootstrap-CA';
+          openssl genrsa -out /certs/server.key 2048;
+          openssl req -new -key /certs/server.key -out /certs/server.csr -subj '/CN=${DOMAIN:-localhost}';
+          echo 'subjectAltName=DNS:${DOMAIN:-localhost},DNS:localhost,IP:127.0.0.1' > /certs/server.ext;
+          openssl x509 -req -in /certs/server.csr -CA /certs/ca.crt -CAkey /certs/ca.key -CAcreateserial -out /certs/server.crt -days 365 -sha256 -extfile /certs/server.ext;
+          rm /certs/server.ext /certs/server.csr;
+          chmod 644 /certs/*.crt;
+          chmod 600 /certs/*.key;
+          echo 'Bootstrap certificates generated.';
+        else
+          echo 'Certificates already exist. Skipping.';
+        fi
+      "
+    networks: [iyzitrace-network]
+
+  inventory-service:
+    image: ${INVENTORY_IMAGE:-}
+    build:
+      context: ${INVENTORY_BUILD:-./inventory-service}
+    container_name: iyz-inventory-service
+    environment:
+      - GIN_MODE=release
+      - SEMREV_ENABLED=true
+      - TZ=UTC
+    volumes:
+      - ${DATA_DIR:-./data}/inventory:/app/data
+      - ./config/inventory/config.yaml:/app/config.yaml:ro
+    ports:
+      - "8080"
+      - "4317"
+    networks: [iyzitrace-network]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  ########################
+  # Server collectors    #
+  ########################
+
+  trace-otel-enrichment:
+    image: ${OTEL_IMAGE:-otel/opentelemetry-collector-contrib:0.145.0}
+    container_name: iyz-trace-otel
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./config/otel/trace.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317"
+      - "4318"
+    networks: [iyzitrace-network]
+    depends_on: [tempo]
+    restart: unless-stopped
+
+  metric-otel-enrichment:
+    image: ${OTEL_IMAGE:-otel/opentelemetry-collector-contrib:0.145.0}
+    container_name: iyz-metric-otel
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./config/otel/metric.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317"
+      - "4318"
+      - "14317"
+    networks: [iyzitrace-network]
+    depends_on: [prometheus]
+    restart: unless-stopped
+
+  log-otel-enrichment:
+    image: ${OTEL_IMAGE:-otel/opentelemetry-collector-contrib:0.145.0}
+    container_name: iyz-log-otel
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./config/otel/log.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317"
+      - "4318"
+    networks: [iyzitrace-network]
+    depends_on: [loki]
+    restart: unless-stopped
+
+  ########################
+  # NGINX signal router  #
+  ########################
+
+  nginx:
+    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
+    container_name: iyz-nginx
+    user: root
+    command: >
+      sh -c "
+        apk add --no-cache inotify-tools;
+        nginx -g 'daemon off;' &
+        while inotifywait -e modify,create,delete /etc/nginx/certs; do
+          echo 'Certificate change detected, reloading Nginx...';
+          nginx -s reload;
+        done
+      "
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${CERTS_DIR:-./config/nginx/certs}:/etc/nginx/certs:ro
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    depends_on:
+      init-certs:
+        condition: service_completed_successfully
+      trace-otel-enrichment:
+        condition: service_started
+      metric-otel-enrichment:
+        condition: service_started
+      log-otel-enrichment:
+        condition: service_started
+    networks: [iyzitrace-network]
+    restart: unless-stopped

@@ -1,0 +1,143 @@
+{
+  "uid": "iyzitrace-operation-dependencies",
+  "title": "iyzitrace · Operation Dependencies",
+  "description": "Operation-level call dependencies derived from iyzitrace_service_graph_request_total. Shows EXACTLY which client RPC method/HTTP route calls which server operation — far more granular than service-to-service dependency views. Includes req/sec, error rate, and latency per pair, plus a pipeline DAG view for selected services.",
+  "tags": ["apm", "iyzitrace", "dependencies", "operations", "pipeline"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-15m", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "service", "label": "Focus service", "description": "Pick a service to scope the pipeline DAG and BFS-filter the Sankey to its reachable downstream subgraph. Other panels always show the full graph.", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(iyzitrace_service_graph_request_total, client)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": false, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}},
+    {"name": "min_rps", "label": "Min rps (declutter)", "type": "custom", "query": "0,0.001,0.01,0.05,0.1,0.5,1", "current": {"text": "0", "value": "0"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "Granularity pulse — service-pair vs operation-pair", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "Service pairs",
+      "description": "Distinct (client, server) edges. Coarse granularity.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 5, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "count(sum by (client, server) (rate(iyzitrace_service_graph_request_total[$__rate_interval])))"}]
+    },
+    {"id": 2, "type": "stat", "title": "Operation pairs",
+      "description": "Distinct (client, server, client_op, server_op) edges. Fine granularity. The 'gain' from operation-level visibility.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 5, "x": 5, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "purple"}}},
+      "targets": [{"refId": "A", "expr": "count(sum by (client, server, client_operation_name, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval])))"}]
+    },
+    {"id": 3, "type": "stat", "title": "Total req / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 5, "x": 10, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(iyzitrace_service_graph_request_total[$__rate_interval]))"}]
+    },
+    {"id": 4, "type": "stat", "title": "Failed req / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 5, "x": 15, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 3, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "orange", "value": 0.1}, {"color": "red", "value": 1}]}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(iyzitrace_service_graph_request_failed_total[$__rate_interval]))"}]
+    },
+    {"id": 5, "type": "stat", "title": "Hottest operation pair",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 5, "w": 4, "x": 20, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "/^Value$/"}, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"refId": "A", "expr": "topk(1, sum by (client, server, client_operation_name, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval])))", "legendFormat": "{{client}}.{{client_operation_name}} → {{server}}.{{server_operation_name}}"}]
+    },
+
+    {"id": 200, "type": "row", "title": "Operation flow — client.op → server.op", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6}},
+
+    {"id": 10, "type": "ae3e-plotly-panel", "title": "Sankey · operation pairs (flow + error tint)",
+      "description": "client.op → server.op flow. Width = req/sec. Red tint = failed edges. Pick a Focus service to BFS-filter to its reachable downstream subgraph.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 16, "w": 24, "x": 0, "y": 7},
+      "targets": [{"refId": "A", "expr": "sum by (client, server, client_operation_name, server_operation_name, failed) (rate(iyzitrace_service_graph_request_total[$__rate_interval])) > ${min_rps}", "format": "table", "instant": true}],
+      "options": {
+        "data": "[]",
+        "layout": "{}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const focus='$service';const isAll=!focus||focus==='.+'||focus.indexOf('$')===0;\nconst series=data.series&&data.series[0];if(!series){return {data:[],layout:{annotations:[{text:'no data',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst F=Object.fromEntries(series.fields.map(f=>[f.name,f.values||[]]));\nconst cs=F.client||[],ss=F.server||[],cops=F.client_operation_name||[],sops=F.server_operation_name||[],fl=F.failed||[],vs=F.Value||[];\nif(!cs.length){return {data:[],layout:{annotations:[{text:'no rows',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nlet reachable=null;if(!isAll){const adj=new Map();for(let i=0;i<cs.length;i++){if(!adj.has(cs[i]))adj.set(cs[i],new Set());adj.get(cs[i]).add(ss[i]);}reachable=new Set([focus]);const q=[focus];while(q.length){const n=q.shift();for(const nx of (adj.get(n)||[])){if(!reachable.has(nx)){reachable.add(nx);q.push(nx);}}}}\nconst rows=[];const aggMap=new Map();\nfor(let i=0;i<cs.length;i++){if(!isAll&&!(reachable&&reachable.has(cs[i])))continue;const k=cs[i]+'|'+(cops[i]||'(unset)')+'|'+ss[i]+'|'+(sops[i]||'(unset)');const f=String(fl[i])==='true';const v=Number(vs[i])||0;const e=aggMap.get(k)||{c:cs[i],s:ss[i],co:cops[i]||'(unset)',so:sops[i]||'(unset)',ok:0,fail:0};if(f)e.fail+=v;else e.ok+=v;aggMap.set(k,e);}\nfor(const e of aggMap.values())rows.push(e);\nif(!rows.length){return {data:[],layout:{annotations:[{text:'no flow reachable from '+focus,showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\n// Build node maps\nconst leftIdx={},rightIdx={};let n=0;\nconst leftLabels=[],rightLabels=[],nodeColors=[];\n// Service color palette\nconst svcColors=['#5794F2','#73BF69','#B877D9','#FF9830','#8AB8FF','#1F60C4','#37872D','#F2CC0C','#FA6400','#C4162A','#E0B400','#3B7EE0'];\nconst svcColorMap=new Map();\nconst getSvcColor=svc=>{if(!svcColorMap.has(svc)){svcColorMap.set(svc,svcColors[svcColorMap.size%svcColors.length]);}return svcColorMap.get(svc);};\nfor(const r of rows){const lk=r.c+'\\u00a0::\\u00a0'+r.co;if(!(lk in leftIdx)){leftIdx[lk]=n++;leftLabels.push(lk);nodeColors.push(getSvcColor(r.c));}}\nfor(const r of rows){const rk=r.s+'\\u00a0::\\u00a0'+r.so;if(!(rk in rightIdx)){rightIdx[rk]=n++;rightLabels.push(rk);nodeColors.push(getSvcColor(r.s));}}\nconst labels=[...leftLabels,...rightLabels];\nconst src=[],tgt=[],val=[],lc=[],cd=[];\nfor(const r of rows){const lk=r.c+'\\u00a0::\\u00a0'+r.co;const rk=r.s+'\\u00a0::\\u00a0'+r.so;const total=r.ok+r.fail;if(total<=0)continue;const errPct=r.fail/total;src.push(leftIdx[lk]);tgt.push(rightIdx[rk]);val.push(total);// Color: green at 0% errors, red at 10%+\nconst tintR=Math.min(255,Math.round(80+errPct*1750));const tintG=Math.max(60,Math.round(180-errPct*1200));const tintB=Math.max(60,Math.round(120-errPct*800));lc.push(`rgba(${tintR},${tintG},${tintB},0.50)`);cd.push(r.c+'.'+r.co+' → '+r.s+'.'+r.so+'<br>req/s: '+total.toFixed(3)+'<br>error %: '+(errPct*100).toFixed(2)+'<br>failed/s: '+r.fail.toFixed(3));}\nreturn {data:[{type:'sankey',orientation:'h',arrangement:'snap',valueformat:'.3f',valuesuffix:' rps',node:{label:labels,pad:18,thickness:18,color:nodeColors,line:{width:0}},link:{source:src,target:tgt,value:val,color:lc,customdata:cd,hovertemplate:'%{customdata}<extra></extra>'}}],layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#d8d9da',size:11},margin:{l:10,r:10,t:10,b:10}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}]}};}"
+      }
+    },
+
+    {"id": 300, "type": "row", "title": "Pipeline view — operation chain DAG", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23}},
+
+    {"id": 20, "type": "ae3e-plotly-panel", "title": "Pipeline DAG · downstream operation chain from focus service",
+      "description": "Layered DAG layout. BFS levels left→right. Each box is a service.operation. Edge color = error rate, edge width hint = req/sec. Pick a Focus service to root the pipeline. With 'All' selected, picks the highest-traffic root.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 18, "w": 24, "x": 0, "y": 24},
+      "targets": [{"refId": "A", "expr": "sum by (client, server, client_operation_name, server_operation_name, failed) (rate(iyzitrace_service_graph_request_total[$__rate_interval])) > ${min_rps}", "format": "table", "instant": true}],
+      "options": {
+        "data": "[]",
+        "layout": "{}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const focusVar='$service';const isAll=!focusVar||focusVar==='.+'||focusVar.indexOf('$')===0;\nconst series=data.series&&data.series[0];if(!series){return {data:[],layout:{annotations:[{text:'no data',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst F=Object.fromEntries(series.fields.map(f=>[f.name,f.values||[]]));\nconst cs=F.client||[],ss=F.server||[],cops=F.client_operation_name||[],sops=F.server_operation_name||[],fl=F.failed||[],vs=F.Value||[];\nif(!cs.length){return {data:[],layout:{annotations:[{text:'no rows',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\n// Aggregate edges with same (clientNode, serverNode) summing ok+fail across operations? No — we want OPERATION-level resolution. Each edge is unique.\nconst edges=[];const nodeKey=(svc,op)=>svc+'\\u00a0::\\u00a0'+op;\nconst aggMap=new Map();\nfor(let i=0;i<cs.length;i++){const k=cs[i]+'|'+(cops[i]||'(unset)')+'|'+ss[i]+'|'+(sops[i]||'(unset)');const f=String(fl[i])==='true';const v=Number(vs[i])||0;const e=aggMap.get(k)||{c:cs[i],s:ss[i],co:cops[i]||'(unset)',so:sops[i]||'(unset)',ok:0,fail:0};if(f)e.fail+=v;else e.ok+=v;aggMap.set(k,e);}\nfor(const e of aggMap.values()){const fromN=nodeKey(e.c,e.co);const toN=nodeKey(e.s,e.so);edges.push({fromN,toN,c:e.c,s:e.s,total:e.ok+e.fail,fail:e.fail});}\n// Find root service. If focus, use that. Else pick service with most outgoing traffic.\nlet root=focusVar;\nif(isAll){const out=new Map();for(const e of edges){out.set(e.c,(out.get(e.c)||0)+e.total);}let maxV=-1;for(const [k,v] of out){if(v>maxV){maxV=v;root=k;}}}\n// BFS from any node belonging to root service. Level = depth in BFS.\nconst nodeLevel=new Map();const adjOut=new Map();\nfor(const e of edges){if(!adjOut.has(e.fromN))adjOut.set(e.fromN,[]);adjOut.get(e.fromN).push(e);}\n// Find all root nodes (any node prefixed with root::)\nconst rootNodes=new Set();for(const e of edges){if(e.c===root)rootNodes.add(e.fromN);}\nif(rootNodes.size===0){return {data:[],layout:{annotations:[{text:'no edges originating from '+root,showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst queue=[];for(const r of rootNodes){nodeLevel.set(r,0);queue.push(r);}\nwhile(queue.length){const n=queue.shift();const lvl=nodeLevel.get(n);for(const e of (adjOut.get(n)||[])){if(!nodeLevel.has(e.toN)||nodeLevel.get(e.toN)>lvl+1){nodeLevel.set(e.toN,lvl+1);queue.push(e.toN);}}}\n// Layout: layered. nodes at (level, slot).\nconst layers={};for(const [node,lvl] of nodeLevel){if(!layers[lvl])layers[lvl]=[];layers[lvl].push(node);}\nconst maxLvl=Math.max(...Object.keys(layers).map(Number));\nconst pos={};\nfor(let lvl=0;lvl<=maxLvl;lvl++){const nodes=(layers[lvl]||[]).sort();const n=nodes.length;for(let i=0;i<n;i++){const x=lvl;const y=n>1?(i-(n-1)/2):0;pos[nodes[i]]={x,y};}}\nif(Object.keys(pos).length===0){return {data:[],layout:{annotations:[{text:'no reachable nodes',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst svcColors=['#5794F2','#73BF69','#B877D9','#FF9830','#8AB8FF','#1F60C4','#37872D','#F2CC0C','#FA6400','#C4162A','#E0B400','#3B7EE0'];\nconst svcColorMap=new Map();const getSvcColor=svc=>{if(!svcColorMap.has(svc)){svcColorMap.set(svc,svcColors[svcColorMap.size%svcColors.length]);}return svcColorMap.get(svc);};\n// Build edge traces (one trace per edge so colors can vary)\nconst traces=[];\nfor(const e of edges){if(!pos[e.fromN]||!pos[e.toN])continue;const errPct=e.total>0?e.fail/e.total:0;const tintR=Math.min(255,Math.round(80+errPct*1750));const tintG=Math.max(60,Math.round(180-errPct*1200));const tintB=Math.max(60,Math.round(120-errPct*800));const widthHint=Math.min(8,1+Math.log10(1+e.total*1000));const a=pos[e.fromN],b=pos[e.toN];// Bezier-ish curve via 1 mid-point\nconst midX=(a.x+b.x)/2;const midY=(a.y+b.y)/2;const xs=[a.x,midX,b.x];const ys=[a.y,midY,b.y];traces.push({type:'scatter',mode:'lines',x:xs,y:ys,line:{color:`rgba(${tintR},${tintG},${tintB},0.7)`,width:widthHint,shape:'spline'},hoverinfo:'text',text:e.fromN+' → '+e.toN+'<br>req/s: '+e.total.toFixed(3)+'<br>error %: '+(errPct*100).toFixed(2),showlegend:false});}\n// Nodes trace\nconst nx=[],ny=[],ntext=[],ncolor=[],ncustom=[];\nfor(const [node,p] of Object.entries(pos)){const svc=node.split('\\u00a0::\\u00a0')[0];const op=node.split('\\u00a0::\\u00a0')[1]||'';nx.push(p.x);ny.push(p.y);ntext.push(svc+'<br>'+op);ncolor.push(getSvcColor(svc));ncustom.push(node);}\ntraces.push({type:'scatter',mode:'markers+text',x:nx,y:ny,text:ntext,textposition:'middle right',marker:{size:24,color:ncolor,line:{width:2,color:'#1f2026'}},textfont:{size:11,color:'#d8d9da'},customdata:ncustom,hovertemplate:'%{customdata}<extra></extra>',showlegend:false});\nreturn {data:traces,layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',xaxis:{visible:false,zeroline:false,showgrid:false,range:[-0.5,maxLvl+1.2]},yaxis:{visible:false,zeroline:false,showgrid:false,scaleanchor:'x',scaleratio:0.6},margin:{l:5,r:200,t:30,b:5},title:{text:'Pipeline rooted at: <b>'+root+'</b>',font:{color:'#d8d9da',size:13}},font:{color:'#d8d9da'}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}]}};}"
+      }
+    },
+
+    {"id": 400, "type": "row", "title": "Adjacency matrix & top error pairs", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 42}},
+
+    {"id": 30, "type": "ae3e-plotly-panel", "title": "Operation pair adjacency matrix",
+      "description": "Heatmap with client.op on Y axis and server.op on X axis. Cell color = req/sec. Hover for error rate. Empty cells = no traffic.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 14, "w": 14, "x": 0, "y": 43},
+      "targets": [
+        {"refId": "A", "expr": "sum by (client, server, client_operation_name, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval]))", "format": "table", "instant": true},
+        {"refId": "B", "expr": "sum by (client, server, client_operation_name, server_operation_name) (rate(iyzitrace_service_graph_request_failed_total[$__rate_interval])) / clamp_min(sum by (client, server, client_operation_name, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval])), 1e-9)", "format": "table", "instant": true}
+      ],
+      "options": {
+        "data": "[]",
+        "layout": "{}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const a=data.series&&data.series[0],b=data.series&&data.series[1];if(!a){return {data:[]};}\nconst FA=Object.fromEntries(a.fields.map(f=>[f.name,f.values||[]]));\nconst FB=b?Object.fromEntries(b.fields.map(f=>[f.name,f.values||[]])):{};\nconst cs=FA.client||[],ss=FA.server||[],cops=FA.client_operation_name||[],sops=FA.server_operation_name||[],vs=FA.Value||[];\nconst rowKeys=[...new Set(cs.map((c,i)=>c+'\\u00a0::\\u00a0'+(cops[i]||'(unset)')))].sort();\nconst colKeys=[...new Set(ss.map((s,i)=>s+'\\u00a0::\\u00a0'+(sops[i]||'(unset)')))].sort();\nconst rIdx=Object.fromEntries(rowKeys.map((n,i)=>[n,i]));\nconst cIdx=Object.fromEntries(colKeys.map((n,i)=>[n,i]));\nconst Z=rowKeys.map(()=>colKeys.map(()=>null));\nfor(let i=0;i<cs.length;i++){const r=rIdx[cs[i]+'\\u00a0::\\u00a0'+(cops[i]||'(unset)')];const c=cIdx[ss[i]+'\\u00a0::\\u00a0'+(sops[i]||'(unset)')];if(r!=null&&c!=null)Z[r][c]=Number(vs[i])||0;}\n// Failure rates\nconst FK={};if(b){const c2=FB.client||[],s2=FB.server||[],co2=FB.client_operation_name||[],so2=FB.server_operation_name||[],v2=FB.Value||[];for(let i=0;i<c2.length;i++){const k=c2[i]+'\\u00a0::\\u00a0'+(co2[i]||'(unset)')+'->'+s2[i]+'\\u00a0::\\u00a0'+(so2[i]||'(unset)');FK[k]=Number(v2[i])||0;}}\nconst hover=rowKeys.map(r=>colKeys.map(c=>{const ri=rIdx[r],ci=cIdx[c];const v=Z[ri][ci];if(v==null)return r+' → '+c+'<br>(no traffic)';const fr=FK[r+'->'+c]||0;return r+' → '+c+'<br>'+v.toFixed(3)+' rps<br>error %: '+(fr*100).toFixed(2);}));\nreturn {data:[{type:'heatmap',z:Z,x:colKeys,y:rowKeys,colorscale:[[0,'#1f2026'],[0.0001,'#0d1b3a'],[0.2,'#1f60c4'],[0.5,'#73bf69'],[0.8,'#ff9830'],[1,'#e02f44']],showscale:true,colorbar:{title:'rps',thickness:10,tickfont:{color:'#d8d9da'},titlefont:{color:'#d8d9da'}},hoverinfo:'text',text:hover,xgap:1,ygap:1}],layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#d8d9da',size:10},margin:{l:240,r:10,t:30,b:140},xaxis:{title:'server.op',side:'top',tickangle:-50,tickfont:{size:10}},yaxis:{title:'client.op',autorange:'reversed',tickfont:{size:10}}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}]}};}"
+      }
+    },
+    {"id": 31, "type": "barchart", "title": "Top 10 operation pairs by error rate",
+      "description": "Sorted by failed/sec / total/sec. Lower-than-min-traffic pairs may be excluded by the min_rps variable.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 14, "w": 10, "x": 14, "y": 43},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "color": {"mode": "continuous-RdYlGr", "reverse": true}, "custom": {"axisLabel": "", "axisPlacement": "auto"}}},
+      "options": {"orientation": "horizontal", "showValue": "auto", "barWidth": 0.85, "legend": {"showLegend": false}, "tooltip": {"mode": "single"}},
+      "targets": [{"refId": "A", "expr": "topk(10, sum by (client, client_operation_name, server, server_operation_name) (rate(iyzitrace_service_graph_request_failed_total[$__rate_interval])) / clamp_min(sum by (client, client_operation_name, server, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval])), 1e-9))", "legendFormat": "{{client}}.{{client_operation_name}} → {{server}}.{{server_operation_name}}", "instant": true}]
+    },
+
+    {"id": 500, "type": "row", "title": "Operation pair RED — full table", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 57}},
+
+    {"id": 40, "type": "table", "title": "Every operation pair — req/s, error %, client p95, server p95",
+      "description": "Sortable. Click any column header. The complete operation-level dependency catalog.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 16, "w": 24, "x": 0, "y": 58},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "rps"}, "properties": [{"id": "unit", "value": "reqps"}, {"id": "decimals", "value": 3}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}]},
+        {"matcher": {"id": "byName", "options": "error %"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "orange", "value": 0.05}, {"color": "red", "value": 0.1}]}}]},
+        {"matcher": {"id": "byName", "options": "Client p95 (s)"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 3}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 2}]}}]},
+        {"matcher": {"id": "byName", "options": "Server p95 (s)"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 3}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 2}]}}]}
+      ]},
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "rps", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (client, client_operation_name, server, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval]))", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "B", "expr": "sum by (client, client_operation_name, server, server_operation_name) (rate(iyzitrace_service_graph_request_failed_total[$__rate_interval])) / clamp_min(sum by (client, client_operation_name, server, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval])), 1e-9)", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "C", "expr": "histogram_quantile(0.95, sum by (client, client_operation_name, server, server_operation_name, le) (rate(iyzitrace_service_graph_request_client_seconds_bucket[$__rate_interval])))", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "D", "expr": "histogram_quantile(0.95, sum by (client, client_operation_name, server, server_operation_name, le) (rate(iyzitrace_service_graph_request_server_seconds_bucket[$__rate_interval])))", "format": "table", "instant": true, "legendFormat": "__auto"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+          "indexByName": {"client": 0, "client_operation_name": 1, "server": 2, "server_operation_name": 3, "Value #A": 4, "Value #B": 5, "Value #C": 6, "Value #D": 7},
+          "renameByName": {"client": "Client", "client_operation_name": "Client.op", "server": "Server", "server_operation_name": "Server.op", "Value #A": "rps", "Value #B": "error %", "Value #C": "Client p95 (s)", "Value #D": "Server p95 (s)"}
+        }}
+      ]
+    }
+  ]
+}

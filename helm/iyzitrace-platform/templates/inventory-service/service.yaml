@@ -1,0 +1,21 @@
+{{- if .Values.inventoryService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "iyzitrace.inventoryServiceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "inventory-service") | nindent 4 }}
+spec:
+  type: {{ .Values.inventoryService.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.inventoryService.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: otlp-grpc
+      port: {{ .Values.inventoryService.service.otlpPort }}
+      targetPort: otlp-grpc
+      protocol: TCP
+  selector:
+    {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "inventory-service") | nindent 4 }}
+{{- end }}

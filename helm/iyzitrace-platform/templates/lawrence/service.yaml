@@ -1,0 +1,25 @@
+{{- if .Values.lawrence.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "iyzitrace.lawrenceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "lawrence") | nindent 4 }}
+spec:
+  type: {{ .Values.lawrence.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.lawrence.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: opamp
+      port: {{ .Values.lawrence.service.opampPort }}
+      targetPort: opamp
+      protocol: TCP
+    - name: otlp-http
+      port: {{ .Values.lawrence.service.otlpHttpPort }}
+      targetPort: otlp-http
+      protocol: TCP
+  selector:
+    {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "lawrence") | nindent 4 }}
+{{- end }}

@@ -1,0 +1,977 @@
+# =============================================================================
+# IyziTrace Observability Platform — Helm Values
+# =============================================================================
+
+nameOverride: ""
+fullnameOverride: ""
+
+global:
+  # Shared secret names used by parent templates and dependency charts.
+  s3SecretName: iyzitrace-s3-credentials
+  tlsSecretName: iyzitrace-tls
+  clusterDomain: cluster.local
+  dnsServiceName: kube-dns
+  dnsNamespace: kube-system
+  security:
+    allowInsecureImages: true
+
+# =============================================================================
+# Gateway API
+# =============================================================================
+gateway:
+  enabled: true
+  className: ""                    # GatewayClass name (e.g. "istio", "nginx")
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+    - name: https
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs: []
+  httpRoute:
+    hostnames: []                  # e.g. ["platform.example.com"]
+
+# =============================================================================
+# Bootstrap TLS Secret
+# =============================================================================
+initCerts:
+  enabled: true
+
+# =============================================================================
+# Custom Components
+# =============================================================================
+
+# --- Lawrence (OpAMP Server) -------------------------------------------------
+lawrence:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/antreklabs/opamp
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    httpPort: 8080
+    opampPort: 4320
+    otlpHttpPort: 4318
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    GIN_MODE: release
+    CGO_ENABLED: "1"
+    LOG_LEVEL: info
+    LOG_FORMAT: json
+    TZ: UTC
+  config:
+    server:
+      http_port: 8080
+      opamp_port: 4320
+    otlp:
+      grpc_endpoint: "0.0.0.0:4317"
+      http_endpoint: "0.0.0.0:4318"
+      agent_grpc_endpoint: ""
+      agent_http_endpoint: ""
+    app_storage:
+      type: sqlite
+      path: ./data/app.db
+    logging:
+      level: debug
+      format: json
+    worker:
+      queue_size: 10000
+      workers: 3
+      timeout: 5s
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+
+# --- Auth Service -------------------------------------------------------------
+authService:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/antreklabs/auth-service
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    PORT: "8080"
+    DB_PATH: /app/data/auth.db
+    UV_THREADPOOL_SIZE: "64"
+  jwtSecret: ""                    # Set at install time; falls back to generated
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+
+# --- Inventory Service --------------------------------------------------------
+inventoryService:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/antreklabs/inventory-service
+    tag: "latest"
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    httpPort: 8080
+    otlpPort: 4317
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  env:
+    GIN_MODE: release
+    LOG_LEVEL: info
+    LOG_FORMAT: json
+    SEMCONV_VERSION: "1.26.0"
+    SEMREV_ENABLED: "true"
+    WORKERS: "4"
+    BATCH_SIZE: "1000"
+    DB_PATH: /app/data/inventory.db
+    TZ: UTC
+  config:
+    server:
+      host: "0.0.0.0"
+      port: 8080
+    otlp:
+      enabled: true
+      grpc_address: "0.0.0.0:4317"
+      http_address: "0.0.0.0:4318"
+    storage:
+      type: sqlite
+      db_path: /app/data/inventory.db
+    pipeline:
+      enabled: true
+      workers: 4
+      batch_size: 1000
+      flush_interval: 200ms
+      channel_size: 10000
+      cache_ttl: 5m
+    semconv:
+      version: "1.26.0"
+    log:
+      level: info
+      format: json
+  persistence:
+    enabled: true
+    size: 1Gi
+    storageClass: ""
+
+# --- Nginx (Signal Router) ----------------------------------------------------
+nginx:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: nginx
+    tag: "1.27-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    annotations: {}
+    httpPort: 80
+    httpsPort: 443
+    nodePorts:
+      http: null
+      https: null
+    loadBalancerIP: ""
+    loadBalancerSourceRanges: []
+    externalTrafficPolicy: Cluster
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: iyzitrace.local
+        paths:
+          - path: /
+            pathType: Prefix
+            port: 80
+    tls: []
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# =============================================================================
+# OTel Collectors (managed by Operator via CRDs)
+# =============================================================================
+otelCollectors:
+  image: otel/opentelemetry-collector-contrib:0.145.0
+  trace:
+    enabled: true
+    replicas: 1
+  metric:
+    enabled: true
+    replicas: 1
+  log:
+    enabled: true
+    replicas: 1
+
+# =============================================================================
+# Dependency Chart Overrides
+# =============================================================================
+
+# --- Tempo (distributed) -----------------------------------------------------
+tempo:
+  enabled: true
+  fullnameOverride: tempo
+  global:
+    extraEnvFrom:
+      - secretRef:
+          name: iyzitrace-s3-credentials
+  traces:
+    otlp:
+      grpc:
+        enabled: true
+      http:
+        enabled: true
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: tempo-data
+        endpoint: seaweedfs-s3:8333
+        region: us-east-1
+        access_key: ${TEMPO_ACCESS_KEY}
+        secret_key: ${TEMPO_SECRET_KEY}
+        insecure: true
+        forcepathstyle: true
+      block:
+        version: vParquet4
+        dedicated_columns:
+          - scope: resource
+            name: service.name
+            type: string
+          - scope: resource
+            name: service.namespace
+            type: string
+          - scope: span
+            name: http.method
+            type: string
+          - scope: span
+            name: db.system
+            type: string
+          - scope: span
+            name: messaging.system
+            type: string
+      pool:
+        max_workers: 100
+        queue_depth: 20000
+      search:
+        prefetch_trace_count: 1000
+      blocklist_poll_concurrency: 10
+  ingester:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+    config:
+      replication_factor: 1
+      trace_idle_period: 10s
+      flush_check_period: 10s
+      max_block_bytes: 104857600
+      max_block_duration: 30m
+      complete_block_timeout: 1h
+      flush_all_on_shutdown: true
+  distributor:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+    config:
+      max_attribute_bytes: 2048
+  querier:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+    config:
+      trace_by_id:
+        query_timeout: 15s
+      search:
+        query_timeout: 60s
+      max_concurrent_queries: 16
+  queryFrontend:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+    config:
+      max_outstanding_per_tenant: 2048
+      max_retries: 3
+      search:
+        concurrent_jobs: 200
+        target_bytes_per_job: 67108864
+        max_spans_per_span_set: 100
+      trace_by_id:
+        query_shards: 32
+  compactor:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+    config:
+      compaction:
+        block_retention: 168h
+        retention_concurrency: 10
+        v2_prefetch_traces_count: 1000
+  server:
+    httpListenPort: 3200
+    grpcListenPort: 9095
+    logLevel: info
+    grpc_server_max_recv_msg_size: 16777216
+    grpc_server_max_send_msg_size: 16777216
+    http_server_read_timeout: 30s
+    http_server_write_timeout: 30s
+  global_overrides:
+    ingestion:
+      rate_strategy: local
+      rate_limit_bytes: 25000000
+      burst_size_bytes: 50000000
+      max_traces_per_user: 20000
+      retry_info_enabled: true
+    read:
+      max_bytes_per_tag_values_query: 5000000
+    global:
+      max_bytes_per_trace: 15000000
+
+# --- Loki (distributed / microservices) ---------------------------------------
+loki:
+  enabled: true
+  fullnameOverride: loki
+  global:
+    extraEnvFrom:
+      - secretRef:
+          name: iyzitrace-s3-credentials
+  deploymentMode: Distributed
+  loki:
+    auth_enabled: false
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9095
+      log_level: info
+      http_server_read_timeout: 5m
+      http_server_write_timeout: 5m
+      grpc_server_max_concurrent_streams: 1000
+      grpc_server_max_recv_msg_size: 16777216
+      grpc_server_max_send_msg_size: 16777216
+    commonConfig:
+      replication_factor: 1
+    ingester:
+      chunk_idle_period: 30m
+      chunk_target_size: 1572864
+      chunk_encoding: snappy
+      max_chunk_age: 2h
+      chunk_retain_period: 1m
+      concurrent_flushes: 64
+      flush_op_timeout: 10m
+      wal:
+        enabled: true
+        checkpoint_duration: 5m
+        flush_on_shutdown: true
+        replay_memory_ceiling: 4GB
+      lifecycler:
+        ring:
+          kvstore:
+            store: memberlist
+          replication_factor: 1
+          heartbeat_timeout: 1m
+    schemaConfig:
+      configs:
+        - from: "2020-10-24"
+          store: tsdb
+          object_store: s3
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+    storage:
+      bucketNames:
+        chunks: loki-data
+        ruler: loki-data
+        admin: loki-data
+      type: s3
+      s3:
+        endpoint: seaweedfs-s3:8333
+        insecure: true
+        region: us-east-1
+        bucketnames: loki-data
+        access_key_id: ${LOKI_ACCESS_KEY}
+        secret_access_key: ${LOKI_SECRET_KEY}
+        s3ForcePathStyle: true
+    compactor:
+      compaction_interval: 10m
+      retention_enabled: true
+      delete_request_store: s3
+      retention_delete_delay: 2h
+      retention_delete_worker_count: 150
+    limits_config:
+      allow_structured_metadata: true
+      volume_enabled: true
+      retention_period: 168h
+      ingestion_rate_strategy: global
+      ingestion_rate_mb: 24
+      ingestion_burst_size_mb: 48
+      per_stream_rate_limit: 5MB
+      per_stream_rate_limit_burst: 20MB
+      max_global_streams_per_user: 10000
+      max_streams_per_user: 0
+      max_line_size: 256KB
+      max_line_size_truncate: false
+      max_label_name_length: 1024
+      max_label_value_length: 2048
+      max_label_names_per_series: 15
+      max_structured_metadata_size: 64KB
+      max_structured_metadata_entries_count: 128
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+      creation_grace_period: 10m
+      unordered_writes: true
+      max_cache_freshness_per_query: 10m
+      split_queries_by_interval: 15m
+      max_query_lookback: 168h
+      otlp_config:
+        resource_attributes:
+          ignore_defaults: true
+          attributes_config:
+            - action: index_label
+              attributes:
+                - service_name
+                - service_namespace
+            - action: structured_metadata
+              attributes:
+                - agent.id
+                - agent.name
+                - agent.group_id
+        log_attributes:
+          - action: structured_metadata
+            attributes:
+              - level
+    query_range:
+      align_queries_with_step: true
+      cache_results: true
+      max_retries: 5
+    memberlist:
+      join_members:
+        - loki-memberlist
+  backend:
+    replicas: 0
+    extraArgs:
+      - -config.expand-env=true
+  read:
+    replicas: 0
+    extraArgs:
+      - -config.expand-env=true
+  write:
+    replicas: 0
+    extraArgs:
+      - -config.expand-env=true
+  ingester:
+    replicas: 1
+    num_zones: 1
+    zoneAwareReplication:
+      enabled: false
+    extraArgs:
+      - -config.expand-env=true
+    affinity: {}
+  distributor:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+    affinity: {}
+  querier:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+  queryFrontend:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+  queryScheduler:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+  indexGateway:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+  compactor:
+    replicas: 1
+    extraArgs:
+      - -config.expand-env=true
+  chunksCache:
+    enabled: true
+    allocatedMemory: 512
+  resultsCache:
+    enabled: true
+    allocatedMemory: 256
+
+# --- Prometheus ---------------------------------------------------------------
+prometheus:
+  enabled: true
+  fullnameOverride: prometheus
+  server:
+    image:
+      repository: quay.io/prometheus/prometheus
+      tag: v3.5.0
+    retention: "2h"
+    env:
+      - name: GOGC
+        value: "100"
+    extraArgs:
+      web.route-prefix: /
+      web.enable-otlp-receiver: ""
+      web.enable-remote-write-receiver: ""
+      enable-feature: exemplar-storage
+      storage.tsdb.min-block-duration: 2h
+      storage.tsdb.max-block-duration: 2h
+    global:
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      evaluation_interval: 30s
+      rule_query_offset: 30s
+      metric_name_validation_scheme: utf8
+      external_labels:
+        cluster: iyzitrace-metrics
+    persistentVolume:
+      enabled: true
+      size: 8Gi
+    extraVolumes:
+      - name: thanos-objstore
+        secret:
+          secretName: iyzitrace-s3-credentials
+          items:
+            - key: objstore.yml
+              path: objstore.yml
+    sidecarContainers:
+      thanos-sidecar:
+        image: quay.io/thanos/thanos:v0.39.2
+        imagePullPolicy: IfNotPresent
+        args:
+          - sidecar
+          - --tsdb.path=/data
+          - --prometheus.url=http://127.0.0.1:9090
+          - --objstore.config-file=/etc/thanos/objstore.yml
+          - --grpc-address=0.0.0.0:10901
+          - --http-address=0.0.0.0:10902
+        ports:
+          - name: thanos-grpc
+            containerPort: 10901
+            protocol: TCP
+          - name: thanos-http
+            containerPort: 10902
+            protocol: TCP
+        volumeMounts:
+          - name: storage-volume
+            mountPath: /data
+          - name: thanos-objstore
+            mountPath: /etc/thanos
+            readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+    service:
+      additionalPorts:
+        - name: thanos-grpc
+          port: 10901
+          targetPort: thanos-grpc
+          protocol: TCP
+        - name: thanos-http
+          port: 10902
+          targetPort: thanos-http
+          protocol: TCP
+  serverFiles:
+    recording_rules.yml:
+      groups:
+        - name: inventory_v2
+          interval: 30s
+          rules:
+            # --- Freshness / last-seen ---
+            - record: machine_last_seen_seconds
+              expr: |
+                time() - max by (cloud_region,host_name) (timestamp(system_cpu_time_seconds_total))
+
+            # --- CPU usage % per host ---
+            - record: inventory_machine_cpu_usage_percent
+              expr: |
+                (
+                  sum by (cloud_region,host_name) (rate(system_cpu_time_seconds_total{state!~"idle|iowait"}[5m]))
+                  /
+                  sum by (cloud_region,host_name) (rate(system_cpu_time_seconds_total[5m]))
+                ) * 100
+
+            # --- Memory used / total / % ---
+            - record: inventory_machine_memory_used_bytes
+              expr: max by (cloud_region,host_name) (system_memory_usage_bytes{state="used"})
+            - record: inventory_machine_memory_total_bytes
+              expr: |
+                max by (cloud_region,host_name) (
+                 system_memory_usage_bytes{state=~"used|free|available"}
+                )
+            - record: inventory_machine_memory_usage_percent
+              expr: |
+                100 * inventory_machine_memory_used_bytes
+                    / inventory_machine_memory_total_bytes
+            - record: inventory_machine_memory_used_gb
+              expr: inventory_machine_memory_used_bytes / 1024^3
+            - record: inventory_machine_memory_total_gb
+              expr: inventory_machine_memory_total_bytes / 1024^3
+
+            # --- Status classification ---
+            - record: inventory_machine_status
+              labels: {status: "healthy"}
+              expr: (machine_last_seen_seconds <= 60)
+            - record: inventory_machine_status
+              labels: {status: "degraded"}
+              expr: (machine_last_seen_seconds > 60 and machine_last_seen_seconds <= 300)
+            - record: inventory_machine_status
+              labels: {status: "down"}
+              expr: (machine_last_seen_seconds > 300)
+
+            # --- Inventory info series (labels only; value=1) ---
+            # 1) base 1-valued vector per host
+            - record: __inv_base
+              expr: max by (cloud_region,host_name) (system_cpu_time_seconds_total) * 0 + 1
+
+            # 2) inherit wanted labels from system_cpu_time_seconds_total (use * with group_left)
+            - record: __inv_join
+              expr: |
+                __inv_base
+                * on(cloud_region,host_name) group_left(host_arch, host_ip, host_mac, os_description, os_type)
+                max by(cloud_region, host_name, host_arch, host_ip, host_mac, os_description, os_type) (system_cpu_time_seconds_total)
+
+            # 3) infrastructureType classification (pod > node > container > vm > host)
+            - record: __inv_info
+              labels: {infrastructureType: "pod"}
+              expr: __inv_join and on(host_name) target_info{k8s_pod_name=~".+"}
+
+            - record: __inv_info
+              labels: {infrastructureType: "node"}
+              expr: __inv_join and on(host_name) target_info{k8s_node_name=~".+"}
+
+            - record: __inv_info
+              labels: {infrastructureType: "container"}
+              expr: __inv_join and on(host_name) (target_info{k8s_container_name=~".+"} unless target_info{k8s_pod_name=~".+"})
+
+            - record: __inv_info
+              labels: {infrastructureType: "vm"}
+              expr: __inv_join and on(host_name) (
+                      target_info{cloud_provider=~".+"}
+                    unless (target_info{k8s_pod_name=~".+"} or target_info{k8s_node_name=~".+"} or target_info{k8s_container_name=~".+"})
+                    )
+            - record: __inv_info
+              labels: {infrastructureType: "host"}
+              expr: __inv_join unless on(host_name) (
+                      target_info{k8s_pod_name=~".+"}
+                    or target_info{k8s_node_name=~".+"}
+                    or target_info{k8s_container_name=~".+"}
+                    or target_info{cloud_provider=~".+"}
+                    )
+
+        - name: process_inventory_v2
+          interval: 30s
+          rules:
+            # 0) Anchor: 1-valued series per (region, host, process) for stable joins
+            - record: __proc_info_anchor
+              expr: |
+                max by (cloud_region, host_name, process_executable_name, process_pid) (process_uptime_seconds) * 0 + 1
+
+            # 1) Last-seen seconds (based on when we last got a sample of uptime)
+            - record: process_last_seen_seconds
+              expr: |
+                time() - max by (cloud_region, host_name, process_executable_name, process_pid) (
+                  timestamp(process_uptime_seconds)
+                )
+
+            # 2) Status classification from last-seen freshness
+            #    Healthy: <=60s; Degraded: (60s, 5m]; Down: >5m
+            - record: inventory_process_status
+              labels: {status: "healthy"}
+              expr: (process_last_seen_seconds <= 60)
+
+            - record: inventory_process_status
+              labels: {status: "degraded"}
+              expr: (process_last_seen_seconds > 60 and process_last_seen_seconds <= 300)
+
+            - record: inventory_process_status
+              labels: {status: "down"}
+              expr: (process_last_seen_seconds > 300)
+
+            # 3) CPU utilization (%)
+            - record: inventory_process_cpu_utilization_percent
+              expr: |
+                (avg by (cloud_region, host_name, process_executable_name, process_pid) (process_cpu_utilization_ratio) * 100)
+                  * on (cloud_region, host_name, process_executable_name, process_pid) group_left()
+                    __proc_info_anchor
+
+            # 4) Memory utilization (%)
+            - record: inventory_process_memory_utilization_percent
+              expr: |
+                (avg by (cloud_region, host_name, process_executable_name, process_pid) (process_memory_utilization_ratio) * 100)
+                  * on (cloud_region, host_name, process_executable_name, process_pid) group_left()
+                    __proc_info_anchor
+
+            # 5) Last seen seconds (exposed as its own metric with the same labels)
+            - record: inventory_process_last_seen_seconds
+              expr: |
+                process_last_seen_seconds
+                  * on (cloud_region, host_name, process_executable_name, process_pid) group_left()
+                    __proc_info_anchor
+        - name: service_observability_v1
+          interval: 30s
+          rules:
+            - record: iyzitrace_service_calls_total_5m
+              expr: |
+                sum by (service_name) (
+                  increase(iyzitrace_span_metrics_calls_total[5m])
+                )
+
+            - record: iyzitrace_service_requests_per_second_5m
+              expr: |
+                sum by (service_name) (
+                  rate(iyzitrace_span_metrics_calls_total[5m])
+                )
+
+            - record: iyzitrace_service_error_calls_total_5m
+              expr: |
+                sum by (service_name) (
+                  increase(iyzitrace_span_metrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
+                )
+
+            - record: iyzitrace_service_errors_per_second_5m
+              expr: |
+                sum by (service_name) (
+                  rate(iyzitrace_span_metrics_calls_total{status_code="STATUS_CODE_ERROR"}[5m])
+                )
+
+            - record: iyzitrace_service_success_calls_total_5m
+              expr: |
+                iyzitrace_service_calls_total_5m
+                  - iyzitrace_service_error_calls_total_5m
+
+            - record: iyzitrace_service_error_percentage_5m
+              expr: |
+                100 * iyzitrace_service_errors_per_second_5m
+                  / clamp_min(iyzitrace_service_requests_per_second_5m, 1e-9)
+
+            - record: iyzitrace_service_duration_milliseconds_sum_per_second_5m
+              expr: |
+                sum by (service_name) (
+                  rate(iyzitrace_span_metrics_duration_milliseconds_sum[5m])
+                )
+
+            - record: iyzitrace_service_duration_milliseconds_count_per_second_5m
+              expr: |
+                sum by (service_name) (
+                  rate(iyzitrace_span_metrics_duration_milliseconds_count[5m])
+                )
+
+            - record: iyzitrace_service_duration_milliseconds_avg_5m
+              expr: |
+                iyzitrace_service_duration_milliseconds_sum_per_second_5m
+                  / clamp_min(iyzitrace_service_duration_milliseconds_count_per_second_5m, 1e-9)
+
+            - record: __iyzitrace_service_duration_milliseconds_bucket_per_second_5m
+              expr: |
+                sum by (service_name, le) (
+                  rate(iyzitrace_span_metrics_duration_milliseconds_bucket[5m])
+                )
+
+            - record: iyzitrace_service_duration_milliseconds_p90_5m
+              expr: |
+                histogram_quantile(0.90, __iyzitrace_service_duration_milliseconds_bucket_per_second_5m)
+
+            - record: iyzitrace_service_duration_milliseconds_p95_5m
+              expr: |
+                histogram_quantile(0.95, __iyzitrace_service_duration_milliseconds_bucket_per_second_5m)
+
+            - record: iyzitrace_service_duration_milliseconds_p99_5m
+              expr: |
+                histogram_quantile(0.99, __iyzitrace_service_duration_milliseconds_bucket_per_second_5m)
+
+            - record: iyzitrace_service_apdex_100ms_400ms_5m
+              expr: |
+                (
+                  sum by (service_name) (__iyzitrace_service_duration_milliseconds_bucket_per_second_5m{le="100"})
+                  + sum by (service_name) (__iyzitrace_service_duration_milliseconds_bucket_per_second_5m{le="400"}) / 2
+                )
+                / clamp_min(iyzitrace_service_duration_milliseconds_count_per_second_5m, 1e-9)
+
+            - record: iyzitrace_service_is_active_5m
+              expr: |
+                iyzitrace_service_calls_total_5m > bool 0
+    alerting_rules.yml:
+      groups:
+        - name: service_alerting_v1
+          interval: 30s
+          rules:
+            - alert: ServiceHighErrorRate
+              expr: |
+                iyzitrace_service_error_percentage_5m > 5
+                  and on (service_name) iyzitrace_service_calls_total_5m > 20
+              for: 10m
+              labels:
+                severity: warning
+                category: service
+              annotations:
+                summary: Service {{ $labels.service_name }} has elevated error rate
+                description: Service {{ $labels.service_name }} error percentage has been above 5% for 10 minutes with at least 20 calls over the last 5 minutes.
+
+            - alert: ServiceHighLatencyP95
+              expr: |
+                iyzitrace_service_duration_milliseconds_p95_5m > 1000
+                  and on (service_name) iyzitrace_service_calls_total_5m > 20
+              for: 10m
+              labels:
+                severity: warning
+                category: service
+              annotations:
+                summary: Service {{ $labels.service_name }} has high p95 latency
+                description: Service {{ $labels.service_name }} p95 latency has been above 1000ms for 10 minutes with at least 20 calls over the last 5 minutes.
+
+            - alert: ServiceApdexLow
+              expr: |
+                iyzitrace_service_apdex_100ms_400ms_5m < 0.85
+                  and on (service_name) iyzitrace_service_calls_total_5m > 20
+              for: 10m
+              labels:
+                severity: warning
+                category: service
+              annotations:
+                summary: Service {{ $labels.service_name }} has low Apdex
+                description: Service {{ $labels.service_name }} Apdex has stayed below 0.85 for 10 minutes with at least 20 calls over the last 5 minutes.
+
+            - alert: ServiceTrafficDropped
+              expr: |
+                iyzitrace_service_requests_per_second_5m
+                  < 0.2 * iyzitrace_service_requests_per_second_5m offset 1h
+                  and on (service_name) iyzitrace_service_calls_total_5m offset 1h > 50
+              for: 15m
+              labels:
+                severity: warning
+                category: service
+              annotations:
+                summary: Service {{ $labels.service_name }} traffic dropped sharply
+                description: Service {{ $labels.service_name }} current request rate is below 20% of its rate one hour ago and the service handled at least 50 calls in that earlier 5 minute window.
+
+            - alert: ServiceNoTraffic
+              expr: |
+                iyzitrace_service_calls_total_5m{service_name=~"^$"} == 0
+                  and on (service_name) iyzitrace_service_calls_total_5m{service_name=~"^$"} offset 1h > 50
+              for: 15m
+              labels:
+                severity: warning
+                category: service
+              annotations:
+                summary: Service {{ $labels.service_name }} has no traffic
+                description: Service {{ $labels.service_name }} has had no calls for 15 minutes after showing sustained traffic one hour earlier. Enable this rule only after replacing the default service_name matcher with continuously active services.
+  # Disable sub-components we don't need
+  alertmanager:
+    enabled: false
+  kube-state-metrics:
+    enabled: false
+  prometheus-node-exporter:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+
+# --- Thanos -------------------------------------------------------------------
+thanos:
+  enabled: true
+  fullnameOverride: thanos
+  image:
+    registry: quay.io
+    repository: thanos/thanos
+    tag: v0.32.5
+  existingObjstoreSecret: iyzitrace-s3-credentials
+  query:
+    enabled: true
+    replicaCount: 1
+    extraFlags:
+      - --query.max-concurrent=5
+      - --query.max-concurrent-select=2
+      - --query.timeout=2m
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+    # Include Prometheus sidecar (head block / near-real-time data).
+    # Without this, query sees only storegateway (uploaded blocks), which can
+    # make fresh metrics appear without current sample values.
+    stores:
+      - iyzitrace-prometheus-server:10901
+  queryFrontend:
+    enabled: true
+  storegateway:
+    enabled: true
+    replicaCount: 1
+    persistence:
+      enabled: true
+      size: 8Gi
+  compactor:
+    enabled: true
+    replicaCount: 1
+    retentionResolutionRaw: 14d
+    retentionResolution5m: 90d
+    retentionResolution1h: 1y
+    persistence:
+      enabled: true
+      size: 8Gi
+  # Sidecar runs alongside Prometheus — configured via Prometheus chart
+  ruler:
+    enabled: false
+  receive:
+    enabled: false
+  metrics:
+    enabled: true
+
+# --- SeaweedFS ----------------------------------------------------------------
+seaweedfs:
+  enabled: true
+  fullnameOverride: seaweedfs
+  filer:
+    s3:
+      enabled: true
+      enableAuth: true
+      existingConfigSecret: iyzitrace-s3-credentials
+      createBuckets:
+        - name: tempo-data
+        - name: loki-data
+        - name: thanos-time-series
+
+# --- OpenTelemetry Operator ---------------------------------------------------
+otelOperator:
+  enabled: true
+  nameOverride: otel-operator
+  fullnameOverride: otel-operator
+  manager:
+    collectorImage:
+      repository: otel/opentelemetry-collector-contrib
+      tag: "0.145.0"

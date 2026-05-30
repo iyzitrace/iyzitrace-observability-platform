@@ -1,0 +1,224 @@
+{
+  "uid": "iyzitrace-http-performance",
+  "title": "iyzitrace · HTTP Performance",
+  "description": "HTTP server- and client-side performance from OTel auto-instrumentation. Latency percentiles, request rate, status code mix, payload sizes, active connections, DNS lookup. Handles both legacy (http_*_duration_milliseconds_*) and new (http_*_request_duration_seconds_*) metric naming.",
+  "tags": ["http", "performance", "iyzitrace", "infrastructure"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-1h", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "service", "label": "Service", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values({__name__=~\"http_(server|client)_(duration_milliseconds_count|request_duration_seconds_count)\"}, service_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "Pulse — server side", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "Server requests / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(http_server_duration_milliseconds_count{service_name=~\"${service:regex}\"}[$__rate_interval])) + sum(rate(http_server_request_duration_seconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 2, "type": "stat", "title": "Server p95 latency",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "ms", "decimals": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 1000}]}}},
+      "targets": [{"refId": "A", "expr": "max(\nhistogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))\nor\nhistogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000\n)"}]
+    },
+    {"id": 3, "type": "stat", "title": "Active server requests",
+      "description": "http_server_active_requests — currently in-flight requests being processed.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"refId": "A", "expr": "sum(http_server_active_requests{service_name=~\"${service:regex}\"})"}]
+    },
+    {"id": 4, "type": "stat", "title": "5xx rate / sec",
+      "description": "Server-side errors per second.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(http_server_duration_milliseconds_count{service_name=~\"${service:regex}\", http_status_code=~\"5..\"}[$__rate_interval])) + sum(rate(http_server_request_duration_seconds_count{service_name=~\"${service:regex}\", http_response_status_code=~\"5..\"}[$__rate_interval]))"}]
+    },
+
+    {"id": 200, "type": "row", "title": "Server side — request rate, latency, status", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}},
+
+    {"id": 10, "type": "timeseries", "title": "Server request rate by service",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (service_name) (rate(http_server_duration_milliseconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "ms · {{service_name}}"},
+        {"refId": "B", "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "s · {{service_name}}"}
+      ]
+    },
+    {"id": 11, "type": "timeseries", "title": "Server p50 / p95 / p99 latency",
+      "description": "Combined view across both metric naming conventions; values normalized to milliseconds.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "ms", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 8}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "p50.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p95.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p99.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "p50 (ms)"},
+        {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "p95 (ms)"},
+        {"refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "p99 (ms)"},
+        {"refId": "D", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000", "legendFormat": "p50 (s→ms)"},
+        {"refId": "E", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000", "legendFormat": "p95 (s→ms)"},
+        {"refId": "F", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000", "legendFormat": "p99 (s→ms)"}
+      ]
+    },
+    {"id": 12, "type": "timeseries", "title": "Status code distribution (server)",
+      "description": "Stacked bars by HTTP status code class. 2xx/3xx green-blue, 4xx orange, 5xx red.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 15},
+      "fieldConfig": {"defaults": {"unit": "reqps", "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 80, "stacking": {"mode": "normal", "group": "A"}}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "^2.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]},
+        {"matcher": {"id": "byRegexp", "options": "^3.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byRegexp", "options": "^4.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byRegexp", "options": "^5.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (http_status_code) (rate(http_server_duration_milliseconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{http_status_code}}"}]
+    },
+    {"id": 13, "type": "timeseries", "title": "Active requests (in-flight)",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 15},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (http_server_active_requests{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+
+    {"id": 300, "type": "row", "title": "Server side — payload sizes & latency heatmap", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24}},
+
+    {"id": 20, "type": "heatmap", "title": "Server latency distribution heatmap",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 25},
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "options": {"calculate": false, "yAxis": {"unit": "ms", "axisPlacement": "left"}, "color": {"mode": "scheme", "scheme": "Spectral", "steps": 64, "exponent": 0.5, "reverse": true}, "cellGap": 1, "filterValues": {"le": 1e-9}, "tooltip": {"mode": "single", "yHistogram": true, "showColorScale": true}, "legend": {"show": true}, "rowsFrame": {"layout": "auto"}},
+      "targets": [{"refId": "A", "expr": "sum by (le) (rate(http_server_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{le}}", "format": "heatmap"}]
+    },
+    {"id": 21, "type": "timeseries", "title": "Server avg request/response body sizes",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 25},
+      "fieldConfig": {"defaults": {"unit": "bytes", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(http_server_request_body_size_bytes_sum{service_name=~\"${service:regex}\"}[$__rate_interval])) / clamp_min(sum(rate(http_server_request_body_size_bytes_count{service_name=~\"${service:regex}\"}[$__rate_interval])), 1)", "legendFormat": "request avg"},
+        {"refId": "B", "expr": "sum(rate(http_server_response_body_size_bytes_sum{service_name=~\"${service:regex}\"}[$__rate_interval])) / clamp_min(sum(rate(http_server_response_body_size_bytes_count{service_name=~\"${service:regex}\"}[$__rate_interval])), 1)", "legendFormat": "response avg"},
+        {"refId": "C", "expr": "sum(rate(http_server_request_size_bytes_sum{service_name=~\"${service:regex}\"}[$__rate_interval])) / clamp_min(sum(rate(http_server_request_size_bytes_count{service_name=~\"${service:regex}\"}[$__rate_interval])), 1)", "legendFormat": "request avg (legacy)"},
+        {"refId": "D", "expr": "sum(rate(http_server_response_size_bytes_sum{service_name=~\"${service:regex}\"}[$__rate_interval])) / clamp_min(sum(rate(http_server_response_size_bytes_count{service_name=~\"${service:regex}\"}[$__rate_interval])), 1)", "legendFormat": "response avg (legacy)"}
+      ]
+    },
+
+    {"id": 400, "type": "row", "title": "Client side — outbound HTTP", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 34}},
+
+    {"id": 30, "type": "stat", "title": "Client requests / sec",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 35},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "reqps", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "purple"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(http_client_duration_milliseconds_count{service_name=~\"${service:regex}\"}[$__rate_interval])) + sum(rate(http_client_request_duration_seconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 31, "type": "stat", "title": "Client p95 latency",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 35},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "ms", "decimals": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 1000}]}}},
+      "targets": [{"refId": "A", "expr": "max(histogram_quantile(0.95, sum by (le) (rate(http_client_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) or histogram_quantile(0.95, sum by (le) (rate(http_client_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000)"}]
+    },
+    {"id": 32, "type": "stat", "title": "Open client connections",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 35},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "sum(http_client_open_connections{service_name=~\"${service:regex}\"})"}]
+    },
+    {"id": 33, "type": "stat", "title": "Active client requests",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 35},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"refId": "A", "expr": "sum(http_client_active_requests{service_name=~\"${service:regex}\"})"}]
+    },
+
+    {"id": 40, "type": "timeseries", "title": "Client request rate by destination host",
+      "description": "What hosts is the selected service calling?",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 39},
+      "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (http_host) (rate(http_client_duration_milliseconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{http_host}}"},
+        {"refId": "B", "expr": "sum by (server_address) (rate(http_client_request_duration_seconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{server_address}}"}
+      ]
+    },
+    {"id": 41, "type": "timeseries", "title": "Client p50 / p95 / p99 latency",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 39},
+      "fieldConfig": {"defaults": {"unit": "ms", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 8}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "p50.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p95.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p99.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_client_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "p50 (ms)"},
+        {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_client_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "p95 (ms)"},
+        {"refId": "C", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_client_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "p99 (ms)"},
+        {"refId": "D", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_client_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000", "legendFormat": "p50 (s→ms)"},
+        {"refId": "E", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_client_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000", "legendFormat": "p95 (s→ms)"},
+        {"refId": "F", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_client_request_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval]))) * 1000", "legendFormat": "p99 (s→ms)"}
+      ]
+    },
+    {"id": 42, "type": "timeseries", "title": "Client connection duration p95",
+      "description": "How long it takes to establish a connection (TCP+TLS+anything else). High = network/peer slowness, not app slowness.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 48},
+      "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (service_name, le) (rate(http_client_connection_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 43, "type": "timeseries", "title": "DNS lookup p95 duration",
+      "description": "DNS resolution latency. > 50ms is slow. Sustained spikes = upstream DNS issue.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 48},
+      "fieldConfig": {"defaults": {"unit": "s", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.5}]}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "thresholdsStyle": {"mode": "dashed"}}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "histogram_quantile(0.95, sum by (service_name, le) (rate(dns_lookup_duration_seconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "legendFormat": "{{service_name}}"}]
+    },
+
+    {"id": 500, "type": "row", "title": "Endpoint inventory", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 56}},
+
+    {"id": 50, "type": "table", "title": "Server endpoints — RED (rate / errors / p95)",
+      "description": "Per (service, method, status) breakdown of HTTP server endpoints. Shows the legacy ms-naming series only — values straight in milliseconds.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 57},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "rps"}, "properties": [{"id": "unit", "value": "reqps"}, {"id": "decimals", "value": 3}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}]},
+        {"matcher": {"id": "byName", "options": "p95 (ms)"}, "properties": [{"id": "unit", "value": "ms"}, {"id": "decimals", "value": 1}, {"id": "custom.cellOptions", "value": {"type": "color-background", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 200}, {"color": "red", "value": 1000}]}}]},
+        {"matcher": {"id": "byName", "options": "Status"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-text"}}]}
+      ]},
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "rps", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "sum by (service_name, http_method, http_status_code) (rate(http_server_duration_milliseconds_count{service_name=~\"${service:regex}\"}[$__rate_interval]))", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "B", "expr": "histogram_quantile(0.95, sum by (service_name, http_method, http_status_code, le) (rate(http_server_duration_milliseconds_bucket{service_name=~\"${service:regex}\"}[$__rate_interval])))", "format": "table", "instant": true, "legendFormat": "__auto"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true},
+          "indexByName": {"service_name": 0, "http_method": 1, "http_status_code": 2, "Value #A": 3, "Value #B": 4},
+          "renameByName": {"service_name": "Service", "http_method": "Method", "http_status_code": "Status", "Value #A": "rps", "Value #B": "p95 (ms)"}
+        }}
+      ]
+    }
+  ]
+}

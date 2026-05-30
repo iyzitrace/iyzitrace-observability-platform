@@ -1,0 +1,30 @@
+{{- if and .Values.gateway.enabled .Values.gateway.className }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "iyzitrace.fullname" . }}
+  labels:
+    {{- include "iyzitrace.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.gateway.className }}
+  gatewayClassName: {{ .Values.gateway.className }}
+  {{- end }}
+  listeners:
+    {{- range .Values.gateway.listeners }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: {{ .protocol }}
+      {{- if .tls }}
+      tls:
+        mode: {{ .tls.mode }}
+        certificateRefs:
+          {{- if .tls.certificateRefs }}
+          {{- range .tls.certificateRefs }}
+          - name: {{ .name }}
+          {{- end }}
+          {{- else }}
+          - name: {{ include "iyzitrace.tlsSecretName" $ }}
+          {{- end }}
+      {{- end }}
+    {{- end }}
+{{- end }}

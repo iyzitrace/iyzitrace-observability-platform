@@ -1,0 +1,32 @@
+apiVersion: 1
+
+providers:
+  - name: Application Performance Monitoring
+    orgId: 1
+    folder: Application Performance Monitoring
+    folderUid: apm
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/apm
+
+  - name: Infrastructure Monitoring Dashboards
+    orgId: 1
+    folder: Infrastructure Monitoring Dashboards
+    folderUid: infra-monitoring
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/infra-monitoring
+
+  - name: Platform Monitoring
+    orgId: 1
+    folder: Platform Monitoring
+    folderUid: platform-monitoring
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards/platform-monitoring

@@ -1,0 +1,28 @@
+server:
+  http_port: 8080
+  opamp_port: 4320
+
+otlp:
+  grpc_endpoint: 0.0.0.0:4317
+  http_endpoint: 0.0.0.0:4318
+  agent_grpc_endpoint: "" 
+  agent_http_endpoint: "http://host.docker.internal:80/ingest/opamp/v1/telemetry/"
+
+app_storage:
+  type: sqlite
+  path: ./data/app.db
+
+external_platform:
+  prometheus_url: "http://thanos-query:9091"
+  loki_url: "http://loki:3100"
+  tempo_url: "http://tempo:3200"
+  otlp_exporter_url: "http://log-otel-enrichment:4318"
+
+logging:
+  level: info
+  format: json
+
+worker:
+  queue_size: 10000
+  workers: 3
+  timeout: 5s

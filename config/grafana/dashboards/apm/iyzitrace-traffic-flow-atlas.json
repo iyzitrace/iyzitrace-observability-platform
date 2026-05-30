@@ -1,0 +1,472 @@
+{
+  "uid": "iyzitrace-traffic-flow-atlas",
+  "title": "iyzitrace \u00b7 Traffic Flow Atlas",
+  "description": "Multi-lens visualization of service-to-service and operation-to-operation traffic, derived from iyzitrace_service_graph_request_total. Sankey + heatmap matrix + sunburst + parallel categories make a single hairball into five readable views.",
+  "tags": [
+    "apm",
+    "iyzitrace",
+    "service-map",
+    "sankey",
+    "flow"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus (Observability Platform)",
+          "value": "prometheus-platform"
+        },
+        "hide": 0
+      },
+      {
+        "name": "service",
+        "label": "Client",
+        "description": "Pick a client service. Every flow visualization shows the full reachable subgraph downstream of that service (multi-hop). Pick All for the entire system.",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": {
+          "qryType": 1,
+          "query": "label_values(iyzitrace_service_graph_request_total, client)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": true,
+        "allValue": ".+",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "min_rps",
+        "label": "Min rps (filter)",
+        "description": "Drop edges below this rps to declutter dense graphs.",
+        "type": "custom",
+        "query": "0,0.001,0.01,0.05,0.1,0.5,1",
+        "current": {
+          "text": "0",
+          "value": "0"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Service edges",
+      "description": "Distinct (client, server) pairs with traffic in the current range.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(sum by (client, server) (rate(iyzitrace_service_graph_request_total{client=~\"$service\"}[$__rate_interval])))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Operation edges",
+      "description": "Distinct (client_op \u2192 server_op) pairs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "purple"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "count(sum by (client, server, client_operation_name, server_operation_name) (rate(iyzitrace_service_graph_request_total{client=~\"$service\"}[$__rate_interval])))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Failed edge share",
+      "description": "Share of total request-rate that is marked failed=true.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.01
+              },
+              {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(iyzitrace_service_graph_request_total{client=~\"$service\",failed=\"true\"}[$__rate_interval])) / clamp_min(sum(rate(iyzitrace_service_graph_request_total{client=~\"$service\"}[$__rate_interval])), 1e-9)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Hottest edge",
+      "description": "Single highest-traffic (client \u2192 server) pair right now.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^Value$/"
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(1, sum by (client, server) (rate(iyzitrace_service_graph_request_total{client=~\"$service\"}[$__rate_interval])))",
+          "legendFormat": "{{client}} \u2192 {{server}}"
+        }
+      ]
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Service flow (client \u2192 server)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 4
+      }
+    },
+    {
+      "id": 10,
+      "type": "ae3e-plotly-panel",
+      "title": "Sankey \u00b7 client \u2192 server",
+      "description": "Width = rps. Red ribbons = failed edges. The clearest single view of which services drive whom.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (client, server, failed, connection_type, server_type, client_db_system) (rate(iyzitrace_service_graph_request_total[$__rate_interval])) > ${min_rps}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "data": "[]",
+        "layout": "{\"paper_bgcolor\":\"rgba(0,0,0,0)\",\"plot_bgcolor\":\"rgba(0,0,0,0)\",\"font\":{\"color\":\"#d8d9da\",\"family\":\"Inter, system-ui, sans-serif\"},\"margin\":{\"l\":10,\"r\":10,\"t\":10,\"b\":10}}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const focus='$service';const isAll=!focus||focus==='.+'||focus.indexOf('$')===0;\nconst series=data.series&&data.series[0];if(!series){return {data:[],layout:{annotations:[{text:'no data',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst F=Object.fromEntries(series.fields.map(f=>[f.name,f.values||[]]));\nconst clients=F.client||[],servers=F.server||[],failed=F.failed||[],vals=F.Value||[],ct=F.connection_type||[],st=F.server_type||[],db=F.client_db_system||[];\n// BFS reachable from focus\nlet reachable=null;\nif(!isAll){const adj=new Map();for(let i=0;i<clients.length;i++){if(!adj.has(clients[i]))adj.set(clients[i],new Set());adj.get(clients[i]).add(servers[i]);}reachable=new Set([focus]);const q=[focus];while(q.length){const n=q.shift();for(const nx of (adj.get(n)||[])){if(!reachable.has(nx)){reachable.add(nx);q.push(nx);}}}}\nconst keep=i=>isAll||(reachable&&reachable.has(clients[i]));\n// Determine kind per node\nconst kindOf={};for(let i=0;i<clients.length;i++){if(!keep(i))continue;kindOf['c::'+clients[i]]=kindOf['c::'+clients[i]]||'service';const isDb=(db[i]&&db[i].length>0)||['db','cache'].includes(st[i]);const isVn=ct[i]==='virtual_node';const k=isDb?'db':(isVn?'external':'service');const cur=kindOf['s::'+servers[i]];if(!cur||(cur==='service'&&k!=='service'))kindOf['s::'+servers[i]]=k;}\nconst namesSet=new Set();for(let i=0;i<clients.length;i++){if(!keep(i))continue;namesSet.add(clients[i]);namesSet.add(servers[i]);}\nconst names=[...namesSet];if(!names.length){return {data:[],layout:{annotations:[{text:'no flow reachable from '+focus,showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst idx=Object.fromEntries(names.map((n,i)=>[n,i]));\nconst svcPal=['#5794F2','#73BF69','#B877D9','#8AB8FF','#37872D','#1F60C4','#F2CC0C','#FF9830','#FA6400'];let svcI=0;\nconst nodeColor=names.map(n=>{const k=kindOf['s::'+n]||kindOf['c::'+n]||'service';if(k==='db')return '#FF780A';if(k==='external')return '#8E8E8E';return svcPal[(svcI++)%svcPal.length];});\nconst nodeLabel=names.map(n=>{const k=kindOf['s::'+n]||kindOf['c::'+n]||'service';return k==='db'?(n+' (db)'):(k==='external'?(n+' (ext)'):n);});\nconst src=[],tgt=[],v=[],lc=[],lab=[];\nfor(let i=0;i<clients.length;i++){if(!keep(i))continue;const c=clients[i],s=servers[i],f=String(failed[i])==='true',val=Number(vals[i])||0;src.push(idx[c]);tgt.push(idx[s]);v.push(val);lc.push(f?'rgba(224,47,68,0.55)':(kindOf['s::'+s]==='db'?'rgba(255,120,10,0.40)':'rgba(87,148,242,0.32)'));lab.push((f?'FAILED \u00b7 ':'')+c+' \u2192 '+s+'  '+val.toFixed(3)+' rps');}\nreturn {data:[{type:'sankey',orientation:'h',arrangement:'snap',valueformat:'.3f',valuesuffix:' rps',node:{label:nodeLabel,pad:18,thickness:22,line:{color:'rgba(0,0,0,0)',width:0},color:nodeColor},link:{source:src,target:tgt,value:v,color:lc,customdata:lab,hovertemplate:'%{customdata}<extra></extra>'}}],layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#d8d9da'},margin:{l:10,r:10,t:10,b:10}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}"
+      }
+    },
+    {
+      "id": 200,
+      "type": "row",
+      "title": "Operation flow",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      }
+    },
+    {
+      "id": 20,
+      "type": "ae3e-plotly-panel",
+      "title": "Sankey \u00b7 client \u2192 client_op \u2192 server \u2192 server_op",
+      "description": "Four-stage flow. Reading left-to-right: caller service, the exact RPC/HTTP method it issued, the callee service it landed on, and the server-side operation that handled it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (client, server, client_operation_name, server_operation_name, failed, connection_type, server_type, client_db_system) (rate(iyzitrace_service_graph_request_total[$__rate_interval])) > ${min_rps}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "data": "[]",
+        "layout": "{}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const focus='$service';const isAll=!focus||focus==='.+'||focus.indexOf('$')===0;\nconst series=data.series&&data.series[0];if(!series){return {data:[],layout:{annotations:[{text:'no data',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst F=Object.fromEntries(series.fields.map(f=>[f.name,f.values||[]]));\nconst cs=F.client||[],ss=F.server||[],cops=F.client_operation_name||[],sops=F.server_operation_name||[],fl=F.failed||[],ct=F.connection_type||[],st=F.server_type||[],db=F.client_db_system||[],vs=F.Value||[];\nif(!cs.length){return {data:[],layout:{annotations:[{text:'no rows',showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nlet reachable=null;if(!isAll){const adj=new Map();for(let i=0;i<cs.length;i++){if(!adj.has(cs[i]))adj.set(cs[i],new Set());adj.get(cs[i]).add(ss[i]);}reachable=new Set([focus]);const q=[focus];while(q.length){const n=q.shift();for(const nx of (adj.get(n)||[])){if(!reachable.has(nx)){reachable.add(nx);q.push(nx);}}}}\nconst rows=[];for(let i=0;i<cs.length;i++){if(!isAll&&!(reachable&&reachable.has(cs[i])))continue;const isDb=(db[i]&&db[i].length>0)||['db','cache'].includes(st[i]);const isVn=ct[i]==='virtual_node';rows.push({c:cs[i],s:ss[i],co:(cops[i]||'(unset)'),so:(sops[i]||'(unset)'),f:String(fl[i])==='true',v:Number(vs[i])||0,kindS:isDb?'db':(isVn?'external':'service')});}\nif(!rows.length){return {data:[],layout:{annotations:[{text:'no flow reachable from '+focus,showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\n// Stage order: 0=client, 1=client_op, 2=server, 3=server_op\nconst stages=[new Map(),new Map(),new Map(),new Map()];\nconst keyOf=(s,r)=>s===0?'c::'+r.c:s===1?'co::'+r.c+'::'+r.co:s===2?'s::'+r.s:'so::'+r.s+'::'+r.so;\nconst labelAt=(s,r)=>[r.c,r.co,r.s,r.so][s];\nfor(const r of rows){for(let s=0;s<4;s++){const k=keyOf(s,r);if(!stages[s].has(k))stages[s].set(k,{label:labelAt(s,r),kind:s>=2?r.kindS:'service'});}}\nconst stageColor=['#5794F2','#B877D9','#73BF69','#FF9830'];\nlet labels=[],colors=[],idx={},i=0;\nfor(let s=0;s<4;s++){for(const [k,n] of stages[s]){idx[k]=i++;let lbl=n.label;let col=stageColor[s];if(n.kind==='db'){col='#FF780A';lbl=n.label+' (db)';}else if(n.kind==='external'){col='#8E8E8E';lbl=n.label+' (ext)';}labels.push(lbl);colors.push(col);}}\nconst src=[],tgt=[],val=[],lc=[],cd=[];\nconst addLink=(a,b,r)=>{src.push(idx[a]);tgt.push(idx[b]);val.push(r.v);lc.push(r.f?'rgba(224,47,68,0.55)':(r.kindS==='db'?'rgba(255,120,10,0.35)':'rgba(140,160,200,0.28)'));cd.push((r.f?'FAILED \u00b7 ':'')+r.c+'.'+r.co+' \u2192 '+r.s+'.'+r.so+'  '+r.v.toFixed(3)+' rps');};\nfor(const r of rows){addLink(keyOf(0,r),keyOf(1,r),r);addLink(keyOf(1,r),keyOf(2,r),r);addLink(keyOf(2,r),keyOf(3,r),r);}\nreturn {data:[{type:'sankey',orientation:'h',arrangement:'snap',valueformat:'.3f',valuesuffix:' rps',node:{label:labels,pad:14,thickness:16,color:colors,line:{width:0}},link:{source:src,target:tgt,value:val,color:lc,customdata:cd,hovertemplate:'%{customdata}<extra></extra>'}}],layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#d8d9da'},margin:{l:10,r:10,t:10,b:10}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}"
+      }
+    },
+    {
+      "id": 300,
+      "type": "row",
+      "title": "Adjacency, hierarchy & categorical flow",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 38
+      }
+    },
+    {
+      "id": 30,
+      "type": "ae3e-plotly-panel",
+      "title": "Adjacency matrix \u00b7 client \u00d7 server",
+      "description": "Each cell = traffic from row (client) to column (server). Hover for rps + failed share. Empty cell = no calls.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 12,
+        "x": 0,
+        "y": 39
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (client, server) (rate(iyzitrace_service_graph_request_total[$__rate_interval]))",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (client, server) (rate(iyzitrace_service_graph_request_total{failed=\"true\"}[$__rate_interval])) / clamp_min(sum by (client, server) (rate(iyzitrace_service_graph_request_total[$__rate_interval])), 1e-9)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "data": "[]",
+        "layout": "{}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const focus='$service';const isAll=!focus||focus==='.+'||focus.indexOf('$')===0;\nconst a=data.series&&data.series[0],b=data.series&&data.series[1];if(!a){return {data:[]};}\nconst FA=Object.fromEntries(a.fields.map(f=>[f.name,f.values||[]]));\nconst FB=b?Object.fromEntries(b.fields.map(f=>[f.name,f.values||[]])):{};\nconst clients=FA.client||[],servers=FA.server||[],vals=FA.Value||[];\nlet reachable=null;if(!isAll){const adj=new Map();for(let i=0;i<clients.length;i++){if(!adj.has(clients[i]))adj.set(clients[i],new Set());adj.get(clients[i]).add(servers[i]);}reachable=new Set([focus]);const q=[focus];while(q.length){const n=q.shift();for(const nx of (adj.get(n)||[])){if(!reachable.has(nx)){reachable.add(nx);q.push(nx);}}}}\nconst keep=i=>isAll||(reachable&&reachable.has(clients[i]));\nconst rowSet=new Set(),colSet=new Set();\nfor(let i=0;i<clients.length;i++){if(keep(i)){rowSet.add(clients[i]);colSet.add(servers[i]);}}\nconst rows=[...rowSet].sort();const cols=[...colSet].sort();\nif(!rows.length){return {data:[],layout:{annotations:[{text:'no flow reachable from '+focus,showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst rIdx=Object.fromEntries(rows.map((n,i)=>[n,i]));\nconst cIdx=Object.fromEntries(cols.map((n,i)=>[n,i]));\nconst Z=rows.map(()=>cols.map(()=>null));\nfor(let i=0;i<clients.length;i++){if(!keep(i))continue;const r=rIdx[clients[i]],c=cIdx[servers[i]];if(r!=null&&c!=null)Z[r][c]=Number(vals[i])||0;}\nconst FK={};if(b){const c2=FB.client||[],s2=FB.server||[],v2=FB.Value||[];for(let i=0;i<c2.length;i++)FK[c2[i]+'>>'+s2[i]]=Number(v2[i])||0;}\nconst hover=rows.map(r=>cols.map(c=>{const v=Z[rows.indexOf(r)][cols.indexOf(c)];if(v==null)return r+' \u2192 '+c+'<br>(no traffic)';const fr=FK[r+'>>'+c]||0;return r+' \u2192 '+c+'<br>'+v.toFixed(3)+' rps<br>failed: '+(fr*100).toFixed(2)+'%';}));\nreturn {data:[{type:'heatmap',z:Z,x:cols,y:rows,colorscale:[[0,'#1f2026'],[0.0001,'#0d1b3a'],[0.2,'#1f60c4'],[0.5,'#73bf69'],[0.8,'#ff9830'],[1,'#e02f44']],showscale:true,colorbar:{title:'rps',thickness:10,tickfont:{color:'#d8d9da'},titlefont:{color:'#d8d9da'}},hoverinfo:'text',text:hover,xgap:2,ygap:2}],layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#d8d9da'},margin:{l:140,r:10,t:30,b:120},xaxis:{title:'server',side:'top',tickangle:-40,tickfont:{size:11}},yaxis:{title:'client',autorange:'reversed',tickfont:{size:11}}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}]}};}"
+      }
+    },
+    {
+      "id": 31,
+      "type": "ae3e-plotly-panel",
+      "title": "Sunburst \u00b7 connection_type \u2192 client \u2192 server \u2192 server_op",
+      "description": "Drillable hierarchy of where requests go. Click a ring to zoom. Click center to zoom out.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 12,
+        "x": 12,
+        "y": 39
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (client_type, client, server, server_operation_name) (rate(iyzitrace_service_graph_request_total[$__rate_interval])) > ${min_rps}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "data": "[]",
+        "layout": "{}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const focus='$service';const isAll=!focus||focus==='.+'||focus.indexOf('$')===0;\nconst s=data.series&&data.series[0];if(!s){return {data:[]};}\nconst F=Object.fromEntries(s.fields.map(f=>[f.name,f.values||[]]));\nconst cts=F.client_type||[],cs=F.client||[],ss=F.server||[],sos=F.server_operation_name||[],vs=F.Value||[];\nlet reachable=null;if(!isAll){const adj=new Map();for(let i=0;i<cs.length;i++){if(!adj.has(cs[i]))adj.set(cs[i],new Set());adj.get(cs[i]).add(ss[i]);}reachable=new Set([focus]);const q=[focus];while(q.length){const n=q.shift();for(const nx of (adj.get(n)||[])){if(!reachable.has(nx)){reachable.add(nx);q.push(nx);}}}}\nconst nodes=new Map();\nconst push=(id,parent,label,val)=>{const n=nodes.get(id)||{id,parent,label,val:0};n.val+=val;nodes.set(id,n);};\npush('root','','traffic',0);\nlet added=0;\nfor(let i=0;i<cs.length;i++){if(!isAll&&!(reachable&&reachable.has(cs[i])))continue;const ct=cts[i]||'(unknown)',c=cs[i]||'(unknown)',sv=ss[i]||'(unknown)',so=sos[i]||'(unset)',v=Number(vs[i])||0;const k1='ct::'+ct,k2=k1+'|c::'+c,k3=k2+'|s::'+sv,k4=k3+'|so::'+so;push(k1,'root',ct,v);push(k2,k1,c,v);push(k3,k2,sv,v);push(k4,k3,so,v);push('root','','traffic',v);added++;}\nif(!added){return {data:[],layout:{annotations:[{text:'no flow reachable from '+focus,showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nconst ids=[],parents=[],labels=[],values=[];\nfor(const [k,n] of nodes){ids.push(k);parents.push(n.parent);labels.push(n.label);values.push(n.val);}\nreturn {data:[{type:'sunburst',ids,parents,labels,values,branchvalues:'total',hovertemplate:'%{label}<br>%{value:.3f} rps<extra></extra>',insidetextorientation:'radial',marker:{colors:values,colorscale:'Viridis',showscale:false,line:{color:'#1f2026',width:1}}}],layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#d8d9da',size:11},margin:{l:5,r:5,t:5,b:5}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}]}};}"
+      }
+    },
+    {
+      "id": 32,
+      "type": "ae3e-plotly-panel",
+      "title": "Parallel categories \u00b7 client \u2192 client_type \u2192 server",
+      "description": "Each polyline is a (client, client_type, server) combination, weighted by rps. Drag axis labels to reorder; brush a category to highlight all flows through it. Red = failed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 14,
+        "w": 24,
+        "x": 0,
+        "y": 53
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (client_type, client, server, failed) (rate(iyzitrace_service_graph_request_total[$__rate_interval])) > ${min_rps}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "data": "[]",
+        "layout": "{}",
+        "config": "{\"displayModeBar\":false,\"responsive\":true}",
+        "onclick": "",
+        "script": "try{const focus='$service';const isAll=!focus||focus==='.+'||focus.indexOf('$')===0;\nconst s=data.series&&data.series[0];if(!s){return {data:[]};}\nconst F=Object.fromEntries(s.fields.map(f=>[f.name,f.values||[]]));\nconst cts=F.client_type||[],cs=F.client||[],ss=F.server||[],fl=F.failed||[],vs=F.Value||[];\nlet reachable=null;if(!isAll){const adj=new Map();for(let i=0;i<cs.length;i++){if(!adj.has(cs[i]))adj.set(cs[i],new Set());adj.get(cs[i]).add(ss[i]);}reachable=new Set([focus]);const q=[focus];while(q.length){const n=q.shift();for(const nx of (adj.get(n)||[])){if(!reachable.has(nx)){reachable.add(nx);q.push(nx);}}}}\nconst dimC=[],dimCT=[],dimS=[],counts=[],colors=[];\nfor(let i=0;i<cs.length;i++){if(!isAll&&!(reachable&&reachable.has(cs[i])))continue;dimC.push(cs[i]||'(unknown)');dimCT.push(cts[i]||'(unknown)');dimS.push(ss[i]||'(unknown)');counts.push(Number(vs[i])||0);colors.push(String(fl[i])==='true'?1:0);}\nif(!counts.length){return {data:[],layout:{annotations:[{text:'no flow reachable from '+focus,showarrow:false,font:{color:'#888'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}\nreturn {data:[{type:'parcats',dimensions:[{label:'client',values:dimC},{label:'client_type',values:dimCT},{label:'server',values:dimS}],counts:counts,line:{color:colors,colorscale:[[0,'#5794F2'],[1,'#E02F44']],shape:'hspline'},hoveron:'color',hoverinfo:'count+probability',arrangement:'freeform',labelfont:{size:13,color:'#d8d9da'},tickfont:{size:11,color:'#d8d9da'}}],layout:{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'rgba(0,0,0,0)',font:{color:'#d8d9da'},margin:{l:80,r:80,t:30,b:30}}};\n}catch(e){return {data:[],layout:{annotations:[{text:'script error: '+e.message,showarrow:false,font:{color:'#e02f44'}}],paper_bgcolor:'rgba(0,0,0,0)'}};}"
+      }
+    }
+  ]
+}

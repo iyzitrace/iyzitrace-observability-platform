@@ -1,0 +1,9 @@
+* @antreklabs/iyzitrace-maintainers
+
+/auth-service/ @antreklabs/iyzitrace-maintainers
+/cli/ @antreklabs/iyzitrace-maintainers
+/inventory-service/ @antreklabs/iyzitrace-maintainers
+/opamp/ @antreklabs/iyzitrace-maintainers
+/helm/ @antreklabs/iyzitrace-maintainers
+/.github/ @antreklabs/iyzitrace-maintainers
+

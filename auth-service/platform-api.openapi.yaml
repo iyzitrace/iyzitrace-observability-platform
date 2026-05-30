@@ -1,0 +1,3125 @@
+# Bundled copy of the platform gateway OpenAPI spec served by auth-service.
+# Keep this file in sync with ../docs/platform-api.openapi.yaml.
+openapi: 3.1.0
+info:
+  title: IyziTrace Platform Gateway API
+  version: 1.0.0
+  summary: OpenAPI description of the public gateway endpoints exposed by the IyziTrace platform.
+  description: |
+    This specification documents the public HTTP surface exposed by the platform NGINX gateway.
+
+    Included:
+    - Platform core system status
+    - OpAMP/Lawrence management APIs
+    - Inventory APIs
+    - OTLP and OpAMP ingestion routes
+    - Curated query passthrough routes for metrics, logs, and traces
+
+    Excluded:
+    - `/api/v1/platform/auth/*` endpoints are intentionally omitted from this Swagger document.
+
+    Notes:
+    - Several endpoints are gateway passthroughs to upstream systems such as Thanos, Loki, Tempo, OTLP receivers, and Lawrence.
+    - Authentication enforcement is configurable at runtime. The security schemes documented here describe the expected access pattern, but some routes may be open if the corresponding platform security toggle is disabled.
+servers:
+  - url: http://localhost
+    description: Local HTTP gateway
+  - url: https://localhost
+    description: Local HTTPS gateway
+tags:
+  - name: System
+    description: Platform health and status endpoints.
+  - name: Ingestion
+    description: Gateway endpoints for OTLP and OpAMP ingestion.
+  - name: Metrics Query
+    description: Curated Thanos/Prometheus query passthrough endpoints.
+  - name: Logs Query
+    description: Curated Loki query passthrough endpoints.
+  - name: Traces Query
+    description: Curated Tempo query passthrough endpoints.
+  - name: OpAMP Agents
+    description: Lawrence agent management operations exposed through the platform gateway.
+  - name: OpAMP Groups
+    description: Lawrence group management operations exposed through the platform gateway.
+  - name: OpAMP Configs
+    description: Lawrence config management operations exposed through the platform gateway.
+  - name: OpAMP Telemetry
+    description: Lawrence telemetry and Lawrence QL endpoints exposed through the platform gateway.
+  - name: OpAMP Topology
+    description: Lawrence topology endpoints exposed through the platform gateway.
+  - name: Inventory
+    description: Inventory and topology APIs served by inventory-service.
+paths:
+  /api/v1/platform/system/status:
+    get:
+      tags: [System]
+      operationId: getPlatformSystemStatus
+      summary: Get platform system status
+      description: |
+        Returns the platform-level component health view used by the console.
+        This endpoint is implemented by `auth-service`, but the auth-management endpoints themselves are intentionally excluded from this specification.
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Platform health was collected successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemStatusResponse"
+        "401":
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Request rejected by security policy, for example when HTTPS is enforced.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to collect status from one or more components.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ingest/otlp/v1/traces:
+    post:
+      tags: [Ingestion]
+      operationId: ingestOtlpTraces
+      summary: Ingest OTLP traces over HTTP
+      description: |
+        Gateway route for OpenTelemetry trace ingestion. The request is forwarded to the trace collector and rewritten to `/v1/traces`.
+
+        The collector accepts standard OTLP/HTTP payloads. This specification intentionally models the body as opaque gateway input instead of embedding the full OTLP protobuf schema.
+      security:
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtlpJsonEnvelope"
+            examples:
+              sample:
+                value:
+                  resourceSpans:
+                    - resource:
+                        attributes:
+                          - key: service.name
+                            value:
+                              stringValue: checkout
+                      scopeSpans:
+                        - spans:
+                            - traceId: 5b8efff798038103d269b633813fc60c
+                              spanId: eee19b7ec3c1b174
+                              name: process_payment
+                              kind: 1
+                              startTimeUnixNano: "1544712660000000000"
+                              endTimeUnixNano: "1544712661000000000"
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Payload accepted by the upstream collector.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericObject"
+        "400":
+          description: Invalid OTLP payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Agent key required when ingress protection is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ingest/otlp/v1/metrics:
+    post:
+      tags: [Ingestion]
+      operationId: ingestOtlpMetrics
+      summary: Ingest OTLP metrics over HTTP
+      description: |
+        Gateway route for OpenTelemetry metric ingestion. The request is forwarded to the metrics collector and rewritten to `/v1/metrics`.
+      security:
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtlpJsonEnvelope"
+            examples:
+              sample:
+                value:
+                  resourceMetrics:
+                    - resource:
+                        attributes:
+                          - key: service.name
+                            value:
+                              stringValue: checkout
+                      scopeMetrics:
+                        - metrics:
+                            - name: http.server.duration
+                              unit: ms
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Payload accepted by the upstream collector.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericObject"
+        "400":
+          description: Invalid OTLP payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Agent key required when ingress protection is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ingest/otlp/v1/logs:
+    post:
+      tags: [Ingestion]
+      operationId: ingestOtlpLogs
+      summary: Ingest OTLP logs over HTTP
+      description: |
+        Gateway route for OpenTelemetry log ingestion. The request is forwarded to the log collector and rewritten to `/v1/logs`.
+      security:
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtlpJsonEnvelope"
+            examples:
+              sample:
+                value:
+                  resourceLogs:
+                    - resource:
+                        attributes:
+                          - key: service.name
+                            value:
+                              stringValue: checkout
+                      scopeLogs:
+                        - logRecords:
+                            - timeUnixNano: "1544712661000000000"
+                              severityText: ERROR
+                              body:
+                                stringValue: Payment provider timeout
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Payload accepted by the upstream collector.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericObject"
+        "400":
+          description: Invalid OTLP payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Agent key required when ingress protection is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ingest/opamp/v1/ws:
+    get:
+      tags: [Ingestion]
+      operationId: openOpampWebSocket
+      summary: Open OpAMP management WebSocket
+      description: |
+        Opens the OpAMP management WebSocket used by agents. The gateway upgrades the request and rewrites the upstream path to `/v1/opamp`.
+
+        OpenAPI cannot fully describe the bidirectional OpAMP session protocol, so this operation documents the HTTP upgrade entrypoint only.
+      security:
+        - iyzitraceApiKey: []
+      responses:
+        "101":
+          description: WebSocket upgrade accepted.
+        "401":
+          description: Agent key required when ingress protection is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ingest/opamp/v1/telemetry/{telemetryPath}:
+    post:
+      tags: [Ingestion]
+      operationId: ingestOpampTelemetry
+      summary: Forward OpAMP agent telemetry
+      description: |
+        Forwards OTLP-style telemetry sent by Lawrence-managed agents through the OpAMP telemetry mirror.
+
+        The `{telemetryPath}` segment represents the upstream path tail after `/ingest/opamp/v1/telemetry/`. In practice this is commonly used for telemetry subpaths such as `v1/metrics`, `v1/logs`, or `v1/traces`.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: telemetryPath
+          in: path
+          required: true
+          description: Upstream telemetry path tail after the mirror prefix.
+          schema:
+            type: string
+          example: v1/metrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtlpJsonEnvelope"
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Telemetry forwarded successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericObject"
+        "400":
+          description: Invalid telemetry payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Agent key required when ingress protection is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /query/v1/metrics/api/v1/query:
+    get:
+      tags: [Metrics Query]
+      operationId: queryMetricsInstant
+      summary: Execute an instant PromQL query through the gateway
+      description: |
+        Curated Thanos/Prometheus passthrough route. The gateway strips the `/query/v1/metrics/` prefix and forwards the request to Thanos Query.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/PromQuery"
+        - $ref: "#/components/parameters/PromTime"
+        - $ref: "#/components/parameters/PromTimeout"
+        - $ref: "#/components/parameters/PromDedup"
+      responses:
+        "200":
+          description: Successful upstream query response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrometheusQueryResponse"
+        "401":
+          description: External reader key required when query protection is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /query/v1/metrics/api/v1/query_range:
+    get:
+      tags: [Metrics Query]
+      operationId: queryMetricsRange
+      summary: Execute a range PromQL query through the gateway
+      description: Curated Thanos/Prometheus range query passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/PromQuery"
+        - $ref: "#/components/parameters/PromStart"
+        - $ref: "#/components/parameters/PromEnd"
+        - $ref: "#/components/parameters/PromStep"
+        - $ref: "#/components/parameters/PromTimeout"
+        - $ref: "#/components/parameters/PromDedup"
+      responses:
+        "200":
+          description: Successful upstream query response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrometheusQueryResponse"
+        "401":
+          description: External reader key required when query protection is enabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /query/v1/metrics/api/v1/series:
+    get:
+      tags: [Metrics Query]
+      operationId: queryMetricsSeries
+      summary: List matching series through the gateway
+      description: Curated Thanos/Prometheus series passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: match[]
+          in: query
+          required: true
+          description: One or more PromQL series selectors.
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+          example:
+            - '{__name__="up"}'
+        - $ref: "#/components/parameters/PromStart"
+        - $ref: "#/components/parameters/PromEnd"
+      responses:
+        "200":
+          description: Successful upstream series response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrometheusQueryResponse"
+
+  /query/v1/metrics/api/v1/labels:
+    get:
+      tags: [Metrics Query]
+      operationId: queryMetricLabels
+      summary: List metric labels through the gateway
+      description: Curated Thanos/Prometheus label passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/PromStart"
+        - $ref: "#/components/parameters/PromEnd"
+      responses:
+        "200":
+          description: Successful upstream label response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrometheusQueryResponse"
+
+  /query/v1/metrics/api/v1/label/{name}/values:
+    get:
+      tags: [Metrics Query]
+      operationId: queryMetricLabelValues
+      summary: List metric label values through the gateway
+      description: Curated Thanos/Prometheus label-value passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: Prometheus label name.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/PromStart"
+        - $ref: "#/components/parameters/PromEnd"
+      responses:
+        "200":
+          description: Successful upstream label values response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrometheusQueryResponse"
+
+  /query/v1/logs/loki/api/v1/query:
+    get:
+      tags: [Logs Query]
+      operationId: queryLogsInstant
+      summary: Execute an instant LogQL query through the gateway
+      description: |
+        Curated Loki passthrough route. The gateway strips the `/query/v1/logs/` prefix and forwards the request to Loki.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+          example: '{service_name="checkout"}'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 100
+        - name: time
+          in: query
+          schema:
+            type: string
+            description: RFC3339 or Unix nanoseconds supported by Loki.
+      responses:
+        "200":
+          description: Successful upstream Loki response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LokiQueryResponse"
+
+  /query/v1/logs/loki/api/v1/query_range:
+    get:
+      tags: [Logs Query]
+      operationId: queryLogsRange
+      summary: Execute a range LogQL query through the gateway
+      description: Curated Loki range query passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: string
+            description: RFC3339 or Unix nanoseconds supported by Loki.
+        - name: end
+          in: query
+          schema:
+            type: string
+            description: RFC3339 or Unix nanoseconds supported by Loki.
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 100
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [forward, backward]
+            default: backward
+        - name: step
+          in: query
+          schema:
+            type: string
+            description: Query resolution for metric-style LogQL.
+      responses:
+        "200":
+          description: Successful upstream Loki response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LokiQueryResponse"
+
+  /query/v1/logs/loki/api/v1/labels:
+    get:
+      tags: [Logs Query]
+      operationId: queryLogLabels
+      summary: List Loki labels through the gateway
+      description: Curated Loki label passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: start
+          in: query
+          schema:
+            type: string
+        - name: end
+          in: query
+          schema:
+            type: string
+        - name: query
+          in: query
+          schema:
+            type: string
+            description: Optional stream selector.
+      responses:
+        "200":
+          description: Successful upstream Loki response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LokiQueryResponse"
+
+  /query/v1/logs/loki/api/v1/label/{name}/values:
+    get:
+      tags: [Logs Query]
+      operationId: queryLogLabelValues
+      summary: List Loki label values through the gateway
+      description: Curated Loki label-value passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: start
+          in: query
+          schema:
+            type: string
+        - name: end
+          in: query
+          schema:
+            type: string
+        - name: query
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful upstream Loki response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LokiQueryResponse"
+
+  /query/v1/traces/api/search:
+    get:
+      tags: [Traces Query]
+      operationId: queryTraceSearch
+      summary: Search traces through the gateway
+      description: |
+        Curated Tempo passthrough route. The gateway strips the `/query/v1/traces/` prefix and forwards the request to Tempo.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Tempo TraceQL query string.
+        - name: tags
+          in: query
+          schema:
+            type: string
+          description: Jaeger-style tags filter for search endpoints.
+        - name: service
+          in: query
+          schema:
+            type: string
+        - name: operation
+          in: query
+          schema:
+            type: string
+        - name: minDuration
+          in: query
+          schema:
+            type: string
+        - name: maxDuration
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 20
+        - name: start
+          in: query
+          schema:
+            type: string
+        - name: end
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful upstream Tempo search response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TempoSearchResponse"
+
+  /query/v1/traces/api/services:
+    get:
+      tags: [Traces Query]
+      operationId: queryTraceServices
+      summary: List trace services through the gateway
+      description: Curated Tempo passthrough.
+      security:
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Successful upstream Tempo response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericObject"
+
+  /query/v1/traces/api/search/tags:
+    get:
+      tags: [Traces Query]
+      operationId: queryTraceTags
+      summary: List searchable trace tags through the gateway
+      description: Curated Tempo passthrough.
+      security:
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Successful upstream Tempo response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericObject"
+
+  /query/v1/traces/api/search/tag/{tagName}/values:
+    get:
+      tags: [Traces Query]
+      operationId: queryTraceTagValues
+      summary: List values for a trace tag through the gateway
+      description: Curated Tempo passthrough.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: tagName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful upstream Tempo response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenericObject"
+
+  /query/v1/traces/api/traces/{traceId}:
+    get:
+      tags: [Traces Query]
+      operationId: queryTraceById
+      summary: Fetch a full trace through the gateway
+      description: Curated Tempo passthrough for trace retrieval by trace ID.
+      security:
+        - iyzitraceApiKey: []
+      parameters:
+        - name: traceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful upstream Tempo response.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TempoTraceResponse"
+        "404":
+          description: Trace not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/health:
+    get:
+      tags: [OpAMP Telemetry]
+      operationId: getOpampHealth
+      summary: Get Lawrence health status
+      description: Gateway route to Lawrence `/api/v1/health`.
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Lawrence is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpampHealthResponse"
+        "503":
+          description: Lawrence is unhealthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpampHealthResponse"
+
+  /api/v1/platform/opamp/agents:
+    get:
+      tags: [OpAMP Agents]
+      operationId: listOpampAgents
+      summary: List managed agents
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Agent list returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetAgentsResponse"
+        "500":
+          description: Failed to fetch agents.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/agents/stats:
+    get:
+      tags: [OpAMP Agents]
+      operationId: getOpampAgentStats
+      summary: Get aggregate agent statistics
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Agent statistics returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetAgentStatsResponse"
+
+  /api/v1/platform/opamp/agents/{id}:
+    get:
+      tags: [OpAMP Agents]
+      operationId: getOpampAgent
+      summary: Get a managed agent by ID
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Agent returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "400":
+          description: Invalid agent ID format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [OpAMP Agents]
+      operationId: deleteOpampAgent
+      summary: Delete a managed agent
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "204":
+          description: Agent deleted successfully.
+        "400":
+          description: Invalid agent ID format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Failed to delete agent.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/agents/{id}/group:
+    patch:
+      tags: [OpAMP Agents]
+      operationId: updateOpampAgentGroup
+      summary: Update an agent's group assignment
+      description: This operation is currently registered but not implemented.
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentGroupRequest"
+      responses:
+        "501":
+          description: Not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/agents/{id}/config:
+    post:
+      tags: [OpAMP Agents]
+      operationId: sendConfigToOpampAgent
+      summary: Store and send config to a managed agent
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendConfigRequest"
+      responses:
+        "200":
+          description: Configuration sent successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendConfigResponse"
+        "202":
+          description: Configuration stored but delivery to the agent failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendConfigResponse"
+        "400":
+          description: Invalid agent ID or invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendConfigResponse"
+
+  /api/v1/platform/opamp/agents/{id}/restart:
+    post:
+      tags: [OpAMP Agents]
+      operationId: restartOpampAgent
+      summary: Send restart command to a managed agent
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+      responses:
+        "200":
+          description: Restart command sent successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestartAgentResponse"
+        "400":
+          description: Invalid agent ID or unsupported restart command.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestartAgentResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestartAgentResponse"
+
+  /api/v1/platform/opamp/groups:
+    get:
+      tags: [OpAMP Groups]
+      operationId: listOpampGroups
+      summary: List Lawrence groups
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Group list returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupCollectionResponse"
+    post:
+      tags: [OpAMP Groups]
+      operationId: createOpampGroup
+      summary: Create a Lawrence group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroupRequest"
+      responses:
+        "201":
+          description: Group created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/groups/{id}:
+    get:
+      tags: [OpAMP Groups]
+      operationId: getOpampGroup
+      summary: Get a Lawrence group by ID
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Group returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "404":
+          description: Group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [OpAMP Groups]
+      operationId: updateOpampGroup
+      summary: Update a Lawrence group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGroupRequest"
+      responses:
+        "200":
+          description: Group updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "404":
+          description: Group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [OpAMP Groups]
+      operationId: deleteOpampGroup
+      summary: Delete a Lawrence group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Group deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageResponse"
+
+  /api/v1/platform/opamp/groups/{id}/config:
+    get:
+      tags: [OpAMP Groups]
+      operationId: getOpampGroupConfig
+      summary: Get the current config assigned to a group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Latest group config returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Config"
+        "404":
+          description: No config is assigned to the group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags: [OpAMP Groups]
+      operationId: assignConfigToOpampGroup
+      summary: Assign an existing config to a group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssignConfigRequest"
+      responses:
+        "200":
+          description: Config assigned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupConfigAssignmentResponse"
+        "404":
+          description: Group or config not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/groups/{id}/agents:
+    get:
+      tags: [OpAMP Groups]
+      operationId: listOpampGroupAgents
+      summary: List agents in a group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Group agents returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentCollectionResponse"
+
+  /api/v1/platform/opamp/groups/{id}/restart:
+    post:
+      tags: [OpAMP Groups]
+      operationId: restartOpampGroup
+      summary: Send restart command to all agents in a group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Restart attempt completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestartGroupResponse"
+        "400":
+          description: No agents could be restarted or invalid group.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestartGroupResponse"
+        "404":
+          description: Group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/configs:
+    get:
+      tags: [OpAMP Configs]
+      operationId: listOpampConfigs
+      summary: List stored Lawrence configs
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: group_id
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        "200":
+          description: Config list returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigCollectionResponse"
+    post:
+      tags: [OpAMP Configs]
+      operationId: createOpampConfig
+      summary: Create a new Lawrence config
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConfigRequest"
+      responses:
+        "201":
+          description: Config created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Config"
+        "400":
+          description: Invalid request body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/configs/validate:
+    post:
+      tags: [OpAMP Configs]
+      operationId: validateOpampConfig
+      summary: Validate an OpenTelemetry collector config
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateConfigRequest"
+      responses:
+        "200":
+          description: Validation completed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateConfigResponse"
+
+  /api/v1/platform/opamp/configs/versions:
+    get:
+      tags: [OpAMP Configs]
+      operationId: listOpampConfigVersions
+      summary: List config versions for an agent or group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - name: agent_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: group_id
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Config versions returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigVersionsResponse"
+        "400":
+          description: Either agent_id or group_id is required.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/configs/{id}:
+    get:
+      tags: [OpAMP Configs]
+      operationId: getOpampConfig
+      summary: Get a Lawrence config by ID
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/ConfigId"
+      responses:
+        "200":
+          description: Config returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Config"
+        "404":
+          description: Config not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags: [OpAMP Configs]
+      operationId: updateOpampConfig
+      summary: Create a new version of an existing config
+      description: |
+        Updating a config creates a new immutable version rather than mutating the existing stored object.
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/ConfigId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateConfigRequest"
+      responses:
+        "200":
+          description: New config version created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Config"
+        "400":
+          description: Invalid request body or invalid YAML content.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Config not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [OpAMP Configs]
+      operationId: deleteOpampConfig
+      summary: Delete a config
+      description: This operation is currently registered but deliberately returns not implemented because configs are immutable and versioned.
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/ConfigId"
+      responses:
+        "501":
+          description: Not implemented.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/telemetry/metrics/query:
+    post:
+      tags: [OpAMP Telemetry]
+      operationId: queryOpampMetrics
+      summary: Query Lawrence metrics telemetry
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryMetricsRequest"
+      responses:
+        "200":
+          description: Metrics returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricQueryResponse"
+        "400":
+          description: Invalid request body or invalid agent ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/telemetry/logs/query:
+    post:
+      tags: [OpAMP Telemetry]
+      operationId: queryOpampLogs
+      summary: Query Lawrence logs telemetry
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryLogsRequest"
+      responses:
+        "200":
+          description: Logs returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogQueryResponse"
+        "400":
+          description: Invalid request body or invalid agent ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/telemetry/traces/query:
+    post:
+      tags: [OpAMP Telemetry]
+      operationId: queryOpampTraces
+      summary: Query Lawrence traces telemetry
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryTracesRequest"
+      responses:
+        "200":
+          description: Traces returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TraceQueryResponse"
+        "400":
+          description: Invalid request body or invalid agent ID.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/telemetry/overview:
+    get:
+      tags: [OpAMP Telemetry]
+      operationId: getOpampTelemetryOverview
+      summary: Get Lawrence telemetry overview
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Telemetry overview returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryOverviewResponse"
+
+  /api/v1/platform/opamp/telemetry/services:
+    get:
+      tags: [OpAMP Telemetry]
+      operationId: listOpampTelemetryServices
+      summary: List service names discovered by Lawrence telemetry
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Services returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServicesResponse"
+
+  /api/v1/platform/opamp/telemetry/query:
+    post:
+      tags: [OpAMP Telemetry]
+      operationId: executeLawrenceQlQuery
+      summary: Execute a Lawrence QL query
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LawrenceQLRequest"
+      responses:
+        "200":
+          description: Query executed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LawrenceQLResponse"
+        "400":
+          description: Invalid request body, syntax, or UUID format.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/telemetry/query/validate:
+    post:
+      tags: [OpAMP Telemetry]
+      operationId: validateLawrenceQlQuery
+      summary: Validate Lawrence QL syntax
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ValidateQueryRequest"
+      responses:
+        "200":
+          description: Validation result returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateQueryResponse"
+
+  /api/v1/platform/opamp/telemetry/query/suggestions:
+    post:
+      tags: [OpAMP Telemetry]
+      operationId: getLawrenceQlSuggestions
+      summary: Get Lawrence QL autocomplete suggestions
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SuggestionsRequest"
+      responses:
+        "200":
+          description: Suggestions returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuggestionsResponse"
+
+  /api/v1/platform/opamp/telemetry/query/templates:
+    get:
+      tags: [OpAMP Telemetry]
+      operationId: getLawrenceQlTemplates
+      summary: List built-in Lawrence QL templates
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Templates returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplatesResponse"
+
+  /api/v1/platform/opamp/telemetry/query/functions:
+    get:
+      tags: [OpAMP Telemetry]
+      operationId: getLawrenceQlFunctions
+      summary: List available Lawrence QL functions
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Function metadata returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FunctionsResponse"
+
+  /api/v1/platform/opamp/topology:
+    get:
+      tags: [OpAMP Topology]
+      operationId: getOpampTopology
+      summary: Get overall Lawrence topology graph
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      responses:
+        "200":
+          description: Topology returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TopologyResponse"
+
+  /api/v1/platform/opamp/topology/agent/{id}:
+    get:
+      tags: [OpAMP Topology]
+      operationId: getOpampAgentTopology
+      summary: Get topology view for a single agent
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/AgentId"
+        - name: time_range
+          in: query
+          description: Time window used when computing node metrics.
+          schema:
+            type: string
+            enum: [1h, 6h, 24h]
+            default: 1h
+      responses:
+        "200":
+          description: Agent topology returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTopologyResponse"
+        "404":
+          description: Agent not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /api/v1/platform/opamp/topology/group/{id}:
+    get:
+      tags: [OpAMP Topology]
+      operationId: getOpampGroupTopology
+      summary: Get topology view for a single group
+      security:
+        - bearerAuth: []
+        - iyzitraceApiKey: []
+      parameters:
+        - $ref: "#/components/parameters/GroupId"
+      responses:
+        "200":
+          description: Group topology returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupTopologyResponse"
+        "404":
+          description: Group not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /inventory/api/v1/health:
+    get:
+      tags: [Inventory]
+      operationId: getInventoryHealth
+      summary: Get inventory-service health
+      responses:
+        "200":
+          description: Inventory service is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryHealthResponse"
+
+  /inventory/api/v1/entities:
+    get:
+      tags: [Inventory]
+      operationId: listInventoryEntities
+      summary: List discovered entities
+      parameters:
+        - $ref: "#/components/parameters/EntityType"
+        - $ref: "#/components/parameters/EntityStatus"
+        - $ref: "#/components/parameters/NameFilter"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Entities returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityListResponse"
+
+  /inventory/api/v1/entities/{id}:
+    get:
+      tags: [Inventory]
+      operationId: getInventoryEntity
+      summary: Get a discovered entity by ID
+      parameters:
+        - $ref: "#/components/parameters/EntityId"
+      responses:
+        "200":
+          description: Entity returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Entity"
+        "404":
+          description: Entity not found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /inventory/api/v1/entities/{id}/relations:
+    get:
+      tags: [Inventory]
+      operationId: getInventoryEntityRelations
+      summary: List relations for a discovered entity
+      parameters:
+        - $ref: "#/components/parameters/EntityId"
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [incoming, outgoing, both]
+            default: both
+      responses:
+        "200":
+          description: Entity relations returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityRelationsResponse"
+
+  /inventory/api/v1/relations:
+    get:
+      tags: [Inventory]
+      operationId: listInventoryRelations
+      summary: List discovered relations
+      parameters:
+        - $ref: "#/components/parameters/RelationType"
+        - name: from
+          in: query
+          schema:
+            type: string
+        - name: to
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Relations returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelationListResponse"
+
+  /inventory/api/v1/stats:
+    get:
+      tags: [Inventory]
+      operationId: getInventoryStats
+      summary: Get inventory statistics
+      responses:
+        "200":
+          description: Inventory statistics returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryStats"
+
+  /inventory/api/v1/topology:
+    get:
+      tags: [Inventory]
+      operationId: getInventoryTopology
+      summary: Get inventory topology graph
+      responses:
+        "200":
+          description: Inventory topology returned successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InventoryTopologyResponse"
+
+components:
+  securitySchemes:
+    iyzitraceApiKey:
+      type: apiKey
+      in: header
+      name: iyzitrace-api-key
+      description: API key header used for agent ingress and external query consumers.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT bearer token accepted by platform middleware.
+  parameters:
+    AgentId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Agent UUID.
+    GroupId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Group identifier.
+    ConfigId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Config identifier.
+    EntityId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Inventory entity identifier.
+    EntityType:
+      name: type
+      in: query
+      description: Filter by one or more entity types.
+      schema:
+        type: array
+        items:
+          $ref: "#/components/schemas/EntityType"
+      style: form
+      explode: true
+    EntityStatus:
+      name: status
+      in: query
+      description: Filter by one or more entity lifecycle statuses.
+      schema:
+        type: array
+        items:
+          $ref: "#/components/schemas/EntityStatus"
+      style: form
+      explode: true
+    RelationType:
+      name: type
+      in: query
+      description: Filter by one or more relation types.
+      schema:
+        type: array
+        items:
+          $ref: "#/components/schemas/RelationType"
+      style: form
+      explode: true
+    NameFilter:
+      name: name
+      in: query
+      description: Entity name substring or pattern filter.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 100
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    PromQuery:
+      name: query
+      in: query
+      required: true
+      schema:
+        type: string
+      description: PromQL query string.
+    PromTime:
+      name: time
+      in: query
+      schema:
+        type: string
+      description: RFC3339 or Unix timestamp supported by the Prometheus API.
+    PromStart:
+      name: start
+      in: query
+      schema:
+        type: string
+      description: Range start time.
+    PromEnd:
+      name: end
+      in: query
+      schema:
+        type: string
+      description: Range end time.
+    PromStep:
+      name: step
+      in: query
+      schema:
+        type: string
+      description: Query resolution step.
+    PromTimeout:
+      name: timeout
+      in: query
+      schema:
+        type: string
+      description: Upstream query timeout.
+    PromDedup:
+      name: dedup
+      in: query
+      schema:
+        type: boolean
+      description: Thanos deduplication toggle.
+  schemas:
+    GenericObject:
+      type: object
+      additionalProperties: true
+    OtlpJsonEnvelope:
+      type: object
+      additionalProperties: true
+      description: Simplified placeholder for OTLP JSON payloads.
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+      required: [error]
+    MessageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+      required: [message]
+    SystemComponentStatus:
+      type: object
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [online, degraded, offline]
+        latency:
+          type: string
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties:
+            type: string
+      required: [name, status, latency]
+    SystemStatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        components:
+          type: array
+          items:
+            $ref: "#/components/schemas/SystemComponentStatus"
+        updated_at:
+          type: string
+          format: date-time
+      required: [status, components, updated_at]
+    AgentStatus:
+      type: string
+      enum: [online, offline, error]
+    Agent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        status:
+          $ref: "#/components/schemas/AgentStatus"
+        last_seen:
+          type: string
+          format: date-time
+        group_id:
+          type: string
+          nullable: true
+        group_name:
+          type: string
+          nullable: true
+        version:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        effective_config:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - labels
+        - status
+        - last_seen
+        - version
+        - capabilities
+        - created_at
+        - updated_at
+    GetAgentsResponse:
+      type: object
+      properties:
+        agents:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Agent"
+        totalCount:
+          type: integer
+        activeCount:
+          type: integer
+        inactiveCount:
+          type: integer
+      required: [agents, totalCount, activeCount, inactiveCount]
+    AgentCollectionResponse:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/Agent"
+        count:
+          type: integer
+      required: [agents, count]
+    GetAgentStatsResponse:
+      type: object
+      properties:
+        totalAgents:
+          type: integer
+        onlineAgents:
+          type: integer
+        offlineAgents:
+          type: integer
+        errorAgents:
+          type: integer
+        groupsCount:
+          type: integer
+      required: [totalAgents, onlineAgents, offlineAgents, errorAgents, groupsCount]
+    UpdateAgentGroupRequest:
+      type: object
+      properties:
+        group_id:
+          type: string
+          format: uuid
+          nullable: true
+    SendConfigRequest:
+      type: object
+      properties:
+        content:
+          type: string
+      required: [content]
+    SendConfigResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        config_id:
+          type: string
+      required: [success, message]
+    RestartAgentResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required: [success, message]
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        agent_count:
+          type: integer
+        config_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        otlp_http_endpoint:
+          type: string
+          nullable: true
+        otlp_grpc_endpoint:
+          type: string
+          nullable: true
+      required: [id, name, labels, agent_count, created_at, updated_at]
+    GroupCollectionResponse:
+      type: object
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/Group"
+        count:
+          type: integer
+      required: [groups, count]
+    CreateGroupRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        otlp_http_endpoint:
+          type: string
+        otlp_grpc_endpoint:
+          type: string
+      required: [name]
+    UpdateGroupRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        otlp_http_endpoint:
+          type: string
+          nullable: true
+        otlp_grpc_endpoint:
+          type: string
+          nullable: true
+    AssignConfigRequest:
+      type: object
+      properties:
+        config_id:
+          type: string
+      required: [config_id]
+    GroupConfigAssignmentResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        config:
+          $ref: "#/components/schemas/Config"
+      required: [message, config]
+    RestartGroupResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        restarted_count:
+          type: integer
+        failed_count:
+          type: integer
+      required: [success, message, restarted_count, failed_count]
+    Config:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        agent_id:
+          type: string
+          format: uuid
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+        config_hash:
+          type: string
+        content:
+          type: string
+        version:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+      required: [id, name, config_hash, content, version, created_at]
+    ConfigCollectionResponse:
+      type: object
+      properties:
+        configs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Config"
+        count:
+          type: integer
+      required: [configs, count]
+    ConfigVersionsResponse:
+      type: object
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Config"
+        count:
+          type: integer
+      required: [versions, count]
+    CreateConfigRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        agent_id:
+          type: string
+          format: uuid
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+        config_hash:
+          type: string
+        content:
+          type: string
+        version:
+          type: integer
+      required: [config_hash, content, version]
+    UpdateConfigRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        content:
+          type: string
+        version:
+          type: integer
+      required: [content, version]
+    ValidateConfigRequest:
+      type: object
+      properties:
+        content:
+          type: string
+      required: [content]
+    ValidateConfigResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+        errors:
+          type: array
+          items:
+            type: string
+      required: [valid]
+    MetricType:
+      type: string
+      enum: [gauge, counter, histogram]
+    Metric:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          nullable: true
+        service_name:
+          type: string
+        metric_name:
+          type: string
+        value:
+          type: number
+        metric_attributes:
+          type: object
+          additionalProperties: true
+        config_hash:
+          type: string
+          nullable: true
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        type:
+          $ref: "#/components/schemas/MetricType"
+      required: [timestamp, agent_id, service_name, metric_name, value, metric_attributes]
+    Log:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          nullable: true
+        service_name:
+          type: string
+        severity_text:
+          type: string
+        severity_number:
+          type: integer
+        body:
+          type: string
+        trace_id:
+          type: string
+          nullable: true
+        span_id:
+          type: string
+          nullable: true
+        log_attributes:
+          type: object
+          additionalProperties: true
+        config_hash:
+          type: string
+          nullable: true
+        severity:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+      required: [timestamp, agent_id, service_name, severity_text, severity_number, body, log_attributes]
+    Trace:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        agent_id:
+          type: string
+          format: uuid
+        config_hash:
+          type: string
+          nullable: true
+        trace_id:
+          type: string
+        span_id:
+          type: string
+        parent_span_id:
+          type: string
+          nullable: true
+        name:
+          type: string
+        duration:
+          type: integer
+          format: int64
+        status_code:
+          type: string
+        status_message:
+          type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - timestamp
+        - agent_id
+        - trace_id
+        - span_id
+        - name
+        - duration
+        - status_code
+        - status_message
+        - attributes
+    QueryMetricsRequest:
+      type: object
+      properties:
+        agent_id:
+          type: string
+          format: uuid
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+        metric_name:
+          type: string
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        limit:
+          type: integer
+        use_rollups:
+          type: boolean
+      required: [start_time, end_time]
+    QueryLogsRequest:
+      type: object
+      properties:
+        agent_id:
+          type: string
+          format: uuid
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          nullable: true
+        search:
+          type: string
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        limit:
+          type: integer
+      required: [start_time, end_time]
+    QueryTracesRequest:
+      type: object
+      properties:
+        agent_id:
+          type: string
+          format: uuid
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+        trace_id:
+          type: string
+          nullable: true
+        service_name:
+          type: string
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        limit:
+          type: integer
+      required: [start_time, end_time]
+    MetricQueryResponse:
+      type: object
+      properties:
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/Metric"
+        count:
+          type: integer
+      required: [metrics, count]
+    LogQueryResponse:
+      type: object
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Log"
+        count:
+          type: integer
+      required: [logs, count]
+    TraceQueryResponse:
+      type: object
+      properties:
+        traces:
+          type: array
+          items:
+            $ref: "#/components/schemas/Trace"
+        count:
+          type: integer
+      required: [traces, count]
+    TelemetryOverviewResponse:
+      type: object
+      properties:
+        totalMetrics:
+          type: integer
+          format: int64
+        totalLogs:
+          type: integer
+          format: int64
+        totalTraces:
+          type: integer
+          format: int64
+        activeAgents:
+          type: integer
+        services:
+          type: array
+          items:
+            type: string
+        lastUpdated:
+          type: string
+          format: date-time
+      required: [totalMetrics, totalLogs, totalTraces, activeAgents, services, lastUpdated]
+    ServicesResponse:
+      type: object
+      properties:
+        services:
+          type: array
+          items:
+            type: string
+        count:
+          type: integer
+      required: [services, count]
+    QueryResult:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [metrics, logs, traces]
+        timestamp:
+          type: string
+          format: date-time
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        value:
+          description: Query result value; may be numeric, string, object, or array depending on the query.
+        data:
+          type: object
+          additionalProperties: true
+      required: [type, timestamp, labels]
+    QueryMeta:
+      type: object
+      properties:
+        execution_time:
+          type: integer
+          description: Duration serialized from Go `time.Duration`, typically in nanoseconds.
+        row_count:
+          type: integer
+        query_type:
+          type: string
+        used_rollups:
+          type: boolean
+      required: [execution_time, row_count, query_type, used_rollups]
+    LawrenceQLRequest:
+      type: object
+      properties:
+        query:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+        limit:
+          type: integer
+        agent_id:
+          type: string
+          nullable: true
+        group_id:
+          type: string
+          nullable: true
+      required: [query]
+    LawrenceQLResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/QueryResult"
+        meta:
+          $ref: "#/components/schemas/QueryMeta"
+      required: [results, meta]
+    ValidateQueryRequest:
+      type: object
+      properties:
+        query:
+          type: string
+      required: [query]
+    ValidateQueryResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        error:
+          type: string
+        message:
+          type: string
+      required: [valid]
+    SuggestionsRequest:
+      type: object
+      properties:
+        query:
+          type: string
+        cursor_pos:
+          type: integer
+      required: [query, cursor_pos]
+    SuggestionsResponse:
+      type: object
+      properties:
+        suggestions:
+          type: array
+          items:
+            type: string
+      required: [suggestions]
+    TemplateInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        query:
+          type: string
+        category:
+          type: string
+      required: [id, name, description, query, category]
+    TemplatesResponse:
+      type: object
+      properties:
+        templates:
+          type: array
+          items:
+            $ref: "#/components/schemas/TemplateInfo"
+      required: [templates]
+    FunctionInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        example:
+          type: string
+      required: [name, description, example]
+    FunctionsResponse:
+      type: object
+      properties:
+        functions:
+          type: array
+          items:
+            $ref: "#/components/schemas/FunctionInfo"
+      required: [functions]
+    OpampHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+        services:
+          type: object
+          additionalProperties:
+            type: string
+      required: [status, timestamp, version, services]
+    NodeMetrics:
+      type: object
+      properties:
+        metric_count:
+          type: integer
+          format: int64
+        log_count:
+          type: integer
+          format: int64
+        trace_count:
+          type: integer
+          format: int64
+        error_rate:
+          type: number
+        latency:
+          type: number
+        throughput_rps:
+          type: number
+      required: [metric_count, log_count, trace_count, error_rate, latency, throughput_rps]
+    TopologyNode:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        group_id:
+          type: string
+          nullable: true
+        group_name:
+          type: string
+          nullable: true
+        labels:
+          type: object
+          additionalProperties:
+            type: string
+        metrics:
+          $ref: "#/components/schemas/NodeMetrics"
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+      required: [id, type, name, status, labels]
+    TopologyEdge:
+      type: object
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        type:
+          type: string
+        label:
+          type: string
+      required: [source, target, type]
+    GroupSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        agent_count:
+          type: integer
+        status:
+          type: string
+      required: [id, name, agent_count, status]
+    TopologyResponse:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopologyEdge"
+        groups:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupSummary"
+        services:
+          type: array
+          items:
+            type: string
+        updated_at:
+          type: string
+          format: date-time
+      required: [nodes, edges, groups, services, updated_at]
+    AgentTopologyResponse:
+      type: object
+      properties:
+        agent:
+          $ref: "#/components/schemas/Agent"
+        metrics:
+          $ref: "#/components/schemas/NodeMetrics"
+        pipeline:
+          type: object
+          additionalProperties: true
+      required: [agent, metrics]
+    GroupTopologyResponse:
+      type: object
+      properties:
+        group:
+          $ref: "#/components/schemas/Group"
+        agents:
+          type: array
+          items:
+            $ref: "#/components/schemas/Agent"
+        agent_count:
+          type: integer
+        metric_count:
+          type: integer
+          format: int64
+      required: [group, agents, agent_count, metric_count]
+    EntityType:
+      type: string
+      enum:
+        - cloud.region
+        - host
+        - container
+        - process
+        - k8s.cluster
+        - k8s.node
+        - k8s.namespace
+        - k8s.deployment
+        - k8s.replicaset
+        - k8s.statefulset
+        - k8s.daemonset
+        - k8s.pod
+        - service
+        - db.instance
+        - db.database
+        - cache.instance
+        - messaging.system
+        - messaging.destination
+        - messaging.producer
+        - messaging.consumer
+        - mobile.app.ios
+        - mobile.app.android
+        - mobile.app
+    EntityStatus:
+      type: string
+      enum: [active, stale, stopped]
+    RelationType:
+      type: string
+      enum:
+        - runs_on
+        - runs_in
+        - located_in
+        - uses
+        - publishes_to
+        - consumes_from
+        - belongs_to
+        - part_of
+        - managed_by
+        - instance_of
+    SignalType:
+      type: string
+      enum: [resource, span, log, metric]
+    SignalSource:
+      type: object
+      properties:
+        signal_type:
+          $ref: "#/components/schemas/SignalType"
+        timestamp:
+          type: string
+          format: date-time
+        trace_id:
+          type: string
+        span_id:
+          type: string
+        span_name:
+          type: string
+        metric_name:
+          type: string
+        metric_type:
+          type: string
+        log_severity:
+          type: string
+        log_body:
+          type: string
+        service_name:
+          type: string
+        service_namespace:
+          type: string
+    Evidence:
+      type: object
+      properties:
+        signal_type:
+          $ref: "#/components/schemas/SignalType"
+        attribute_key:
+          type: string
+        attribute_value:
+          type: string
+        semconv_version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        source:
+          $ref: "#/components/schemas/SignalSource"
+      required: [signal_type, attribute_key, attribute_value, semconv_version, timestamp]
+    InstanceInfo:
+      type: object
+      properties:
+        instance_id:
+          type: string
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/EntityStatus"
+        attrs:
+          type: object
+          additionalProperties:
+            type: string
+      required: [instance_id, first_seen, last_seen, status]
+    Entity:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          $ref: "#/components/schemas/EntityType"
+        name:
+          type: string
+        attrs:
+          type: object
+          additionalProperties:
+            type: string
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/Evidence"
+        status:
+          $ref: "#/components/schemas/EntityStatus"
+        instance_count:
+          type: integer
+        active_count:
+          type: integer
+        instances:
+          type: array
+          items:
+            $ref: "#/components/schemas/InstanceInfo"
+      required:
+        - id
+        - type
+        - name
+        - attrs
+        - first_seen
+        - last_seen
+        - evidence
+        - status
+        - instance_count
+        - active_count
+    Relation:
+      type: object
+      properties:
+        from_id:
+          type: string
+        to_id:
+          type: string
+        type:
+          $ref: "#/components/schemas/RelationType"
+        attrs:
+          type: object
+          additionalProperties:
+            type: string
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/Evidence"
+      required: [from_id, to_id, type, first_seen, last_seen, evidence]
+    EntityListResponse:
+      type: object
+      properties:
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entity"
+        count:
+          type: integer
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required: [entities, count, total, limit, offset]
+    RelationListResponse:
+      type: object
+      properties:
+        relations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Relation"
+        count:
+          type: integer
+        total:
+          type: integer
+          format: int64
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required: [relations, count, total, limit, offset]
+    EntityRelationsResponse:
+      type: object
+      properties:
+        relations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Relation"
+        count:
+          type: integer
+      required: [relations, count]
+    InventoryHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
+    InventoryStats:
+      type: object
+      properties:
+        entityCount:
+          type: integer
+          format: int64
+        relationCount:
+          type: integer
+          format: int64
+        entityTypes:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+        relationTypes:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+      description: |
+        Inventory stats are returned directly from Go struct fields and may serialize with implementation-defined field names if no JSON tags are added upstream.
+      additionalProperties: true
+    InventoryTopologyNode:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          $ref: "#/components/schemas/EntityType"
+        name:
+          type: string
+        attrs:
+          type: object
+          additionalProperties:
+            type: string
+      required: [id, type, name]
+    InventoryTopologyEdge:
+      type: object
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        type:
+          $ref: "#/components/schemas/RelationType"
+      required: [from, to, type]
+    InventoryTopologyResponse:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryTopologyNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/InventoryTopologyEdge"
+      required: [nodes, edges]
+    PrometheusQueryResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        errorType:
+          type: string
+        error:
+          type: string
+        warnings:
+          type: array
+          items:
+            type: string
+      required: [status]
+    LokiQueryResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        errorType:
+          type: string
+        error:
+          type: string
+      required: [status]
+    TempoSearchResponse:
+      type: object
+      properties:
+        traces:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        metrics:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+    TempoTraceResponse:
+      type: object
+      additionalProperties: true

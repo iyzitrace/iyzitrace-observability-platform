@@ -1,0 +1,28 @@
+# Inventory Service Configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+otlp:
+  enabled: true
+  grpc_address: "0.0.0.0:4317"
+  http_address: "0.0.0.0:4318"
+
+storage:
+  type: "sqlite"
+  db_path: "/app/data/inventory.db"
+
+pipeline:
+  enabled: true
+  workers: 4
+  batch_size: 1000
+  flush_interval: 200ms
+  channel_size: 10000
+  cache_ttl: 5m
+
+semconv:
+  version: "1.26.0"
+
+log:
+  level: "info"
+  format: "json"

@@ -1,0 +1,26 @@
+services:
+  grafana:
+    image: grafana/grafana:latest
+    container_name: iyzitrace-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: adminadmin
+      GF_INSTALL_PLUGINS: yesoreyeram-infinity-datasource, ae3e-plotly-panel
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./datasources:/etc/grafana/provisioning/datasources:ro
+      - ./dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./folders.yml:/etc/grafana/provisioning/folders/folders.yml:ro
+      - ./dashboards/apm:/etc/grafana/provisioning/dashboards/apm:ro
+      - ./dashboards/infra-monitoring:/etc/grafana/provisioning/dashboards/infra-monitoring:ro
+      - ./dashboards/platform-monitoring:/etc/grafana/provisioning/dashboards/platform-monitoring:ro
+      - grafana-data:/var/lib/grafana
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  grafana-data:

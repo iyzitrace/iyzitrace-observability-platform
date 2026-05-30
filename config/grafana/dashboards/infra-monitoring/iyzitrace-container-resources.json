@@ -1,0 +1,194 @@
+{
+  "uid": "iyzitrace-container-resources",
+  "title": "iyzitrace · Container Resources",
+  "description": "OpenTelemetry Docker stats receiver: per-container CPU, memory pressure vs limit, network rx/tx, blockio. The Docker layer between the host and the application services.",
+  "tags": ["container", "docker", "infrastructure", "iyzitrace"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-1h", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "host", "label": "Host", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(container_cpu_utilization_ratio, host_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}},
+    {"name": "container", "label": "Container", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(container_cpu_utilization_ratio{host_name=~\"${host:regex}\"}, container_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "Container pulse", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "Containers",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "count(container_cpu_utilization_ratio{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})"}]
+    },
+    {"id": 2, "type": "stat", "title": "Total CPU usage",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"refId": "A", "expr": "sum(container_cpu_utilization_ratio{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})"}]
+    },
+    {"id": 3, "type": "stat", "title": "Total memory used",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "yellow"}}},
+      "targets": [{"refId": "A", "expr": "sum(container_memory_usage_total_bytes{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})"}]
+    },
+    {"id": 4, "type": "stat", "title": "Total memory limit",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "purple"}}},
+      "targets": [{"refId": "A", "expr": "sum(container_memory_usage_limit_bytes{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})"}]
+    },
+    {"id": 5, "type": "stat", "title": "Total network in",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "Bps", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(container_network_io_usage_rx_bytes_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval]))"}]
+    },
+    {"id": 6, "type": "stat", "title": "Total network out",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "Bps", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "orange"}}},
+      "targets": [{"refId": "A", "expr": "sum(rate(container_network_io_usage_tx_bytes_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval]))"}]
+    },
+
+    {"id": 200, "type": "row", "title": "CPU pressure", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}},
+
+    {"id": 10, "type": "timeseries", "title": "CPU utilization per container (top 20)",
+      "description": "container_cpu_utilization_ratio. 1.0 = one core busy. Sustained high = candidate for vertical scaling.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "topk(20, container_cpu_utilization_ratio{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})", "legendFormat": "{{container_name}}"}]
+    },
+    {"id": 11, "type": "timeseries", "title": "User vs kernel CPU per container",
+      "description": "User mode = your application code. Kernel mode = syscalls (I/O, context switches). Heavy kernel time = lots of syscalls.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "ns", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "topk(10, sum by (container_name) (rate(container_cpu_usage_usermode_nanoseconds_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval])))", "legendFormat": "user · {{container_name}}"},
+        {"refId": "B", "expr": "topk(10, sum by (container_name) (rate(container_cpu_usage_kernelmode_nanoseconds_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval])))", "legendFormat": "kernel · {{container_name}}"}
+      ]
+    },
+    {"id": 12, "type": "table", "title": "CPU heavy hitters",
+      "description": "Containers ranked by current CPU utilization.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 16},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "CPU %"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 3}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "red", "value": 1}]}}]},
+        {"matcher": {"id": "byName", "options": "User ns/s"}, "properties": [{"id": "unit", "value": "ns"}, {"id": "decimals", "value": 0}]},
+        {"matcher": {"id": "byName", "options": "Kernel ns/s"}, "properties": [{"id": "unit", "value": "ns"}, {"id": "decimals", "value": 0}]}
+      ]},
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "CPU %", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "topk(20, container_cpu_utilization_ratio{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "B", "expr": "sum by (container_name) (rate(container_cpu_usage_usermode_nanoseconds_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval]))", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "C", "expr": "sum by (container_name) (rate(container_cpu_usage_kernelmode_nanoseconds_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval]))", "format": "table", "instant": true, "legendFormat": "__auto"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "container_id": true, "container_image_name": true, "container_hostname": true, "container_runtime": true},
+          "indexByName": {"container_name": 0, "host_name": 1, "Value #A": 2, "Value #B": 3, "Value #C": 4},
+          "renameByName": {"container_name": "Container", "host_name": "Host", "Value #A": "CPU %", "Value #B": "User ns/s", "Value #C": "Kernel ns/s"}
+        }}
+      ]
+    },
+
+    {"id": 300, "type": "row", "title": "Memory pressure", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25}},
+
+    {"id": 20, "type": "timeseries", "title": "Memory used vs limit (top 20)",
+      "description": "container_memory_percent_ratio = used / limit. Approaches 1.0 → OOMKill imminent.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 26},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "orange", "value": 0.85}, {"color": "red", "value": 0.95}]}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "thresholdsStyle": {"mode": "dashed"}}}},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "topk(20, container_memory_percent_ratio{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})", "legendFormat": "{{container_name}}"}]
+    },
+    {"id": 21, "type": "timeseries", "title": "Memory used (absolute) per container — top 15",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 36},
+      "fieldConfig": {"defaults": {"unit": "bytes", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "topk(15, container_memory_usage_total_bytes{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})", "legendFormat": "{{container_name}}"}]
+    },
+    {"id": 22, "type": "timeseries", "title": "Page-cache memory (file-backed)",
+      "description": "container_memory_file_bytes — pages backed by files (not anonymous). High value = lots of mmap'd files / cached I/O.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 36},
+      "fieldConfig": {"defaults": {"unit": "bytes", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "topk(15, container_memory_file_bytes{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"})", "legendFormat": "{{container_name}}"}]
+    },
+    {"id": 23, "type": "table", "title": "Memory pressure ranking",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 45},
+      "fieldConfig": {"defaults": {"custom": {"align": "auto"}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "Used"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 1}]},
+        {"matcher": {"id": "byName", "options": "Limit"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 1}]},
+        {"matcher": {"id": "byName", "options": "Used %"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "decimals", "value": 2}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "orange", "value": 0.85}, {"color": "red", "value": 0.95}]}}]}
+      ]},
+      "options": {"showHeader": true, "footer": {"show": false}, "sortBy": [{"displayName": "Used %", "desc": true}]},
+      "targets": [
+        {"refId": "A", "expr": "container_memory_usage_total_bytes{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "B", "expr": "container_memory_usage_limit_bytes{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}", "format": "table", "instant": true, "legendFormat": "__auto"},
+        {"refId": "C", "expr": "container_memory_percent_ratio{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}", "format": "table", "instant": true, "legendFormat": "__auto"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {
+          "excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "container_id": true, "container_image_name": true, "container_hostname": true, "container_runtime": true},
+          "indexByName": {"container_name": 0, "host_name": 1, "Value #A": 2, "Value #B": 3, "Value #C": 4},
+          "renameByName": {"container_name": "Container", "host_name": "Host", "Value #A": "Used", "Value #B": "Limit", "Value #C": "Used %"}
+        }}
+      ]
+    },
+
+    {"id": 400, "type": "row", "title": "Network I/O", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 54}},
+
+    {"id": 30, "type": "timeseries", "title": "Network rx (bytes/sec) per container — top 15",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 55},
+      "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "topk(15, sum by (container_name) (rate(container_network_io_usage_rx_bytes_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval])))", "legendFormat": "{{container_name}}"}]
+    },
+    {"id": 31, "type": "timeseries", "title": "Network tx (bytes/sec) per container — top 15",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 55},
+      "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "topk(15, sum by (container_name) (rate(container_network_io_usage_tx_bytes_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval])))", "legendFormat": "{{container_name}}"}]
+    },
+    {"id": 32, "type": "timeseries", "title": "Dropped packets / sec",
+      "description": "Should be 0 in a healthy stack. Sustained > 0 = NIC saturation or kernel buffer full.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 64},
+      "fieldConfig": {"defaults": {"unit": "ops", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 1}]}, "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 70}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["sum", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum by (container_name) (rate(container_network_io_usage_rx_dropped_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval])) > 0", "legendFormat": "rx dropped · {{container_name}}"},
+        {"refId": "B", "expr": "sum by (container_name) (rate(container_network_io_usage_tx_dropped_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval])) > 0", "legendFormat": "tx dropped · {{container_name}}"}
+      ]
+    },
+
+    {"id": 500, "type": "row", "title": "Block I/O", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 72}},
+
+    {"id": 40, "type": "timeseries", "title": "Block I/O bytes per container — top 15",
+      "description": "container_blockio_io_service_bytes_recursive. Combined read+write traffic from container's block devices.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 73},
+      "fieldConfig": {"defaults": {"unit": "Bps", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "topk(15, sum by (container_name) (rate(container_blockio_io_service_bytes_recursive_total{host_name=~\"${host:regex}\", container_name=~\"${container:regex}\"}[$__rate_interval])))", "legendFormat": "{{container_name}}"}]
+    }
+  ]
+}

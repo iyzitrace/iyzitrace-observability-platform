@@ -1,0 +1,96 @@
+# Copyright The OpenTelemetry Authors
+# SPDX-License-Identifier: Apache-2.0
+
+global:
+  # Align Prometheus scrape interval with the OTel SDKs' export interval for consistency (see OTEL_METRIC_EXPORT_INTERVAL)
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  # Remote-write and OTLP ingestion can arrive slightly later than wall clock.
+  rule_query_offset: 30s
+  external_labels:
+    cluster: 'iyzitrace-metrics'
+  metric_name_validation_scheme: utf8
+
+runtime:
+  gogc: 100
+
+otlp:
+  # Keep the default Prometheus-compatible OTLP name translation explicit.
+  translation_strategy: UnderscoreEscapingWithSuffixes
+  keep_identifying_resource_attributes: true
+  # Promote only stable, workload-level resource attributes. Avoid pod/container
+  # level labels here because they create high series churn for little query value.
+  promote_resource_attributes:
+    - service.name
+    - service.namespace
+    - service.version
+    - deployment.environment
+    - deployment.environment.name
+    - cloud.region
+    - cloud.availability_zone
+    - k8s.cluster.name
+    - k8s.namespace.name
+    - k8s.deployment.name
+    - k8s.statefulset.name
+    - k8s.daemonset.name
+    - k8s.job.name
+    - k8s.cronjob.name
+
+storage:
+  tsdb:
+    out_of_order_time_window: 30m
+  exemplars:
+    max_exemplars: 200000
+
+rule_files:
+  - /etc/prometheus/rules/*.yaml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# Platform self-monitoring — scrape all iyzitrace components that expose
+# Prometheus metrics. All targets are reachable on the iyzitrace-network bridge.
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']
+
+  # OTel collector internal metrics (exposed by the collector telemetry pipeline)
+  - job_name: otel-collector-trace
+    static_configs:
+      - targets: ['trace-otel-enrichment:8888']
+        labels:
+          collector: trace-otel-enrichment
+
+  - job_name: otel-collector-metric
+    static_configs:
+      - targets: ['metric-otel-enrichment:8888']
+        labels:
+          collector: metric-otel-enrichment
+
+  - job_name: otel-collector-log
+    static_configs:
+      - targets: ['log-otel-enrichment:8888']
+        labels:
+          collector: log-otel-enrichment
+
+  # SeaweedFS object storage
+  - job_name: seaweedfs
+    static_configs:
+      - targets: ['seaweedfs:9327']
+
+  # Lawrence OpAMP server (Go service — exposes /metrics via prometheus client)
+  - job_name: lawrence
+    static_configs:
+      - targets: ['lawrence:8080']
+    metrics_path: /metrics
+  # Note: inventory-service does not expose a Prometheus /metrics endpoint.
+  # Its operational data flows through the OTLP pipeline into Prometheus via
+  # metric-otel-enrichment, labelled with service.name="inventory-service".

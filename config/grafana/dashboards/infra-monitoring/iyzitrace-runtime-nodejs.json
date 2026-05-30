@@ -1,0 +1,117 @@
+{
+  "uid": "iyzitrace-runtime-nodejs",
+  "title": "iyzitrace · Node.js Runtime",
+  "description": "OpenTelemetry Node.js runtime: event-loop deep-dive. Event-loop saturation/delay is the canonical Node health signal — drives p99 latency more than CPU does. Auto-discovers Node services via telemetry_sdk_language=\"nodejs\".",
+  "tags": ["runtime", "nodejs", "iyzitrace", "infrastructure"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-1h", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "service", "label": "Service", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(nodejs_eventloop_utilization_ratio, service_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "Event-loop pulse", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "Active Node services",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "count(nodejs_eventloop_utilization_ratio{service_name=~\"${service:regex}\"})"}]
+    },
+    {"id": 2, "type": "stat", "title": "Node version",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 4, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "none", "graphMode": "none", "textMode": "name"},
+      "fieldConfig": {"defaults": {"unit": "none", "color": {"mode": "fixed", "fixedColor": "purple"}}},
+      "targets": [{"refId": "A", "expr": "max by (process_runtime_description) (nodejs_eventloop_utilization_ratio{service_name=~\"${service:regex}\"})", "legendFormat": "{{process_runtime_description}}"}]
+    },
+    {"id": 3, "type": "stat", "title": "Event-loop utilization",
+      "description": "0–1 ratio of busy/total. Sustained > 0.7 = the loop is the bottleneck.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 9, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "orange", "value": 0.7}, {"color": "red", "value": 0.9}]}}},
+      "targets": [{"refId": "A", "expr": "avg(nodejs_eventloop_utilization_ratio{service_name=~\"${service:regex}\"})"}]
+    },
+    {"id": 4, "type": "stat", "title": "Event-loop p99 delay",
+      "description": "Worst-case lag between scheduled tick and actual execution.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 14, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 4, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.01}, {"color": "orange", "value": 0.1}, {"color": "red", "value": 1}]}}},
+      "targets": [{"refId": "A", "expr": "max(nodejs_eventloop_delay_p99_seconds{service_name=~\"${service:regex}\"})"}]
+    },
+    {"id": 5, "type": "stat", "title": "Event-loop mean delay",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 19, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 5, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "avg(nodejs_eventloop_delay_mean_seconds{service_name=~\"${service:regex}\"})"}]
+    },
+
+    {"id": 200, "type": "row", "title": "Event-loop saturation", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}},
+
+    {"id": 10, "type": "timeseries", "title": "Event-loop utilization per service",
+      "description": "Sustained > 0.7 = the loop is saturated; queued work backs up and tail latency spikes.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "orange", "value": 0.7}, {"color": "red", "value": 0.9}]}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "thresholdsStyle": {"mode": "dashed"}}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "avg by (service_name) (nodejs_eventloop_utilization_ratio{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 11, "type": "timeseries", "title": "Event-loop time / sec",
+      "description": "rate(nodejs_eventloop_time). Wall seconds the loop spent executing per real second. Approaches 1.0 as the loop saturates.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 3, "min": 0, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (rate(nodejs_eventloop_time_seconds_total{service_name=~\"${service:regex}\"}[$__rate_interval]))", "legendFormat": "{{service_name}}"}]
+    },
+
+    {"id": 300, "type": "row", "title": "Event-loop delay percentiles", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15}},
+
+    {"id": 20, "type": "timeseries", "title": "Delay percentiles (p50 / p90 / p99) — overlay",
+      "description": "Tick-to-execute lag percentiles. Healthy Node loops keep p99 under 10ms; > 100ms means individual handlers are blocking.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 5}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "p50.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p90.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byRegexp", "options": "p99.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "max by (service_name) (nodejs_eventloop_delay_p50_seconds{service_name=~\"${service:regex}\"})", "legendFormat": "p50 · {{service_name}}"},
+        {"refId": "B", "expr": "max by (service_name) (nodejs_eventloop_delay_p90_seconds{service_name=~\"${service:regex}\"})", "legendFormat": "p90 · {{service_name}}"},
+        {"refId": "C", "expr": "max by (service_name) (nodejs_eventloop_delay_p99_seconds{service_name=~\"${service:regex}\"})", "legendFormat": "p99 · {{service_name}}"}
+      ]
+    },
+    {"id": 21, "type": "timeseries", "title": "Delay min / mean / max — variance",
+      "description": "Wide max-mean gap = sporadic blocking handlers. Steady high mean = chronic overload.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 16},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 5}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "max.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]},
+        {"matcher": {"id": "byRegexp", "options": "mean.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byRegexp", "options": "min.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "min by (service_name) (nodejs_eventloop_delay_min_seconds{service_name=~\"${service:regex}\"})", "legendFormat": "min · {{service_name}}"},
+        {"refId": "B", "expr": "avg by (service_name) (nodejs_eventloop_delay_mean_seconds{service_name=~\"${service:regex}\"})", "legendFormat": "mean · {{service_name}}"},
+        {"refId": "C", "expr": "max by (service_name) (nodejs_eventloop_delay_max_seconds{service_name=~\"${service:regex}\"})", "legendFormat": "max · {{service_name}}"}
+      ]
+    },
+
+    {"id": 22, "type": "timeseries", "title": "Delay standard deviation — jitter",
+      "description": "How much the loop's lag varies. High stddev = inconsistent handler durations (a long-tail handler is dragging things).",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 25},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 5, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "max by (service_name) (nodejs_eventloop_delay_stddev_seconds{service_name=~\"${service:regex}\"})", "legendFormat": "{{service_name}}"}]
+    }
+  ]
+}

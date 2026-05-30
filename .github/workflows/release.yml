@@ -1,0 +1,174 @@
+name: Release – Bundle & CLI
+
+# Trigger on `bundle-v*` tags. The tag's version must match bundle/BUNDLE_VERSION
+# exactly (the validate job enforces this). The CLI's `iyzitrace init` resolves
+# its default GitHub URL with this exact tag scheme:
+#   https://github.com/<owner>/<repo>/releases/download/bundle-v<X.Y.Z>/iyzitrace-bundle-<X.Y.Z>.tar.gz
+#
+# To cut a release:
+#   1. Edit bundle/BUNDLE_VERSION → e.g. 0.0.2
+#   2. git commit -am "release: bundle v0.0.2"
+#   3. git tag bundle-v0.0.2 && git push --tags
+on:
+  push:
+    tags:
+      - 'bundle-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Bundle version to release (e.g. 0.0.2). Must match bundle/BUNDLE_VERSION on the chosen ref.'
+        required: true
+      draft:
+        description: 'Create release as draft (review before publishing).'
+        type: boolean
+        default: true
+      prerelease:
+        description: 'Mark release as pre-release.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    name: Validate tag matches BUNDLE_VERSION
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: parse
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            tag_version="${{ github.event.inputs.version }}"
+          else
+            tag_version="${GITHUB_REF#refs/tags/bundle-v}"
+          fi
+          bundle_version="$(cat bundle/BUNDLE_VERSION | tr -d ' \n\t')"
+          if [ "$tag_version" != "$bundle_version" ]; then
+            echo "::error::tag version ($tag_version) != bundle/BUNDLE_VERSION ($bundle_version)"
+            exit 1
+          fi
+          echo "version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "Releasing bundle + CLI v$tag_version"
+
+  bundle:
+    name: Build bundle tarball
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build bundle
+        run: make bundle
+      - name: Verify artifact
+        run: |
+          v="${{ needs.validate.outputs.version }}"
+          test -f "dist/iyzitrace-bundle-${v}.tar.gz"
+          test -f "dist/iyzitrace-bundle-${v}.tar.gz.sha256"
+          tar tzf "dist/iyzitrace-bundle-${v}.tar.gz" | head -20
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: |
+            dist/iyzitrace-bundle-*.tar.gz
+            dist/iyzitrace-bundle-*.tar.gz.sha256
+          if-no-files-found: error
+
+  cli:
+    name: Build CLI (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+      - name: Build static binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          v="${{ needs.validate.outputs.version }}"
+          out="iyzitrace-${v}-${GOOS}-${GOARCH}"
+          mkdir -p dist
+          make -C cli build \
+            VERSION="$v" \
+            BUNDLE_VERSION="$v" \
+            OUT="$PWD/dist/$out"
+          (cd dist && sha256sum "$out" | awk '{print $1}' > "$out.sha256")
+          ls -la "dist/$out" "dist/$out.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/iyzitrace-*-${{ matrix.goos }}-${{ matrix.goarch }}
+            dist/iyzitrace-*-${{ matrix.goos }}-${{ matrix.goarch }}.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [validate, bundle, cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Show release contents
+        run: ls -la dist/
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: bundle-v${{ needs.validate.outputs.version }}
+          name: bundle v${{ needs.validate.outputs.version }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
+          target_commitish: ${{ github.sha }}
+          body: |
+            Bundle and CLI for iyzitrace observability platform v${{ needs.validate.outputs.version }}.
+
+            **Install on a fresh host:**
+            ```bash
+            # 1. Download the CLI for your platform
+            curl -LO https://github.com/${{ github.repository }}/releases/download/bundle-v${{ needs.validate.outputs.version }}/iyzitrace-${{ needs.validate.outputs.version }}-linux-amd64
+            chmod +x iyzitrace-${{ needs.validate.outputs.version }}-linux-amd64
+            sudo mv iyzitrace-${{ needs.validate.outputs.version }}-linux-amd64 /usr/local/bin/iyzitrace
+
+            # 2. Init pulls the matching bundle automatically
+            iyzitrace init --require-checksum
+            iyzitrace config edit         # set data_dir + build paths
+            iyzitrace apply
+            iyzitrace up
+            ```
+
+            See [docs/cli.md](https://github.com/${{ github.repository }}/blob/main/docs/cli.md)
+            for the full guide.
+
+            ### Checksums
+            Every artifact has a `.sha256` sibling. `iyzitrace init --require-checksum`
+            enforces verification of the bundle.
+          files: |
+            dist/iyzitrace-bundle-*.tar.gz
+            dist/iyzitrace-bundle-*.tar.gz.sha256
+            dist/iyzitrace-*-linux-amd64
+            dist/iyzitrace-*-linux-amd64.sha256
+            dist/iyzitrace-*-linux-arm64
+            dist/iyzitrace-*-linux-arm64.sha256
+            dist/iyzitrace-*-darwin-amd64
+            dist/iyzitrace-*-darwin-amd64.sha256
+            dist/iyzitrace-*-darwin-arm64
+            dist/iyzitrace-*-darwin-arm64.sha256
+          fail_on_unmatched_files: true

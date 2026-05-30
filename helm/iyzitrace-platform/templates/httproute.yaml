@@ -1,0 +1,129 @@
+{{- if and .Values.gateway.enabled .Values.gateway.className }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "iyzitrace.fullname" . }}
+  labels:
+    {{- include "iyzitrace.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ include "iyzitrace.fullname" . }}
+  {{- if .Values.gateway.httpRoute.hostnames }}
+  hostnames:
+    {{- range .Values.gateway.httpRoute.hostnames }}
+    - {{ . | quote }}
+    {{- end }}
+  {{- end }}
+  rules:
+    # --- Ingestion: OTLP Logs ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ingest/otlp/v1/logs
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Ingestion: OTLP Metrics ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ingest/otlp/v1/metrics
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Ingestion: OTLP Traces ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ingest/otlp/v1/traces
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Ingestion: OpAMP WebSocket ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ingest/opamp/v1/ws
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Ingestion: OpAMP Telemetry ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /ingest/opamp/v1/telemetry
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Query: Metrics ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /query/v1/metrics
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Query: Logs ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /query/v1/logs
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Query: Traces ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /query/v1/traces
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Platform API ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1/platform
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Console ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /console
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Inventory ---
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /inventory
+      backendRefs:
+        - name: {{ include "iyzitrace.nginxName" . }}
+          port: {{ .Values.nginx.service.httpPort }}
+
+    # --- Root redirect ---
+    - matches:
+        - path:
+            type: Exact
+            value: /
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /console/
+            statusCode: 301
+{{- end }}

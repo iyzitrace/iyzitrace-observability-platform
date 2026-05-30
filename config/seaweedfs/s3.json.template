@@ -1,0 +1,52 @@
+{
+    "identities": [
+        {
+            "name": "loki",
+            "credentials": [
+                {
+                    "accessKey": "${LOKI_ACCESS_KEY}",
+                    "secretKey": "${LOKI_SECRET_KEY}"
+                }
+            ],
+            "actions": [
+                "Read",
+                "Write",
+                "List",
+                "Tagging",
+                "Admin"
+            ]
+        },
+        {
+            "name": "tempo",
+            "credentials": [
+                {
+                    "accessKey": "${TEMPO_ACCESS_KEY}",
+                    "secretKey": "${TEMPO_SECRET_KEY}"
+                }
+            ],
+            "actions": [
+                "Read",
+                "Write",
+                "List",
+                "Tagging",
+                "Admin"
+            ]
+        },
+        {
+            "name": "thanos",
+            "credentials": [
+                {
+                    "accessKey": "${THANOS_ACCESS_KEY}",
+                    "secretKey": "${THANOS_SECRET_KEY}"
+                }
+            ],
+            "actions": [
+                "Read",
+                "Write",
+                "List",
+                "Tagging",
+                "Admin"
+            ]
+        }
+    ]
+}

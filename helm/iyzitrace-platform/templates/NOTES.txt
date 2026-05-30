@@ -1,0 +1,29 @@
+╔══════════════════════════════════════════════════════════════╗
+║           IyziTrace Observability Platform                  ║
+╚══════════════════════════════════════════════════════════════╝
+
+Thank you for installing {{ .Chart.Name }} ({{ .Chart.Version }}).
+
+Your release name is: {{ .Release.Name }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Entry Point
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Nginx:  {{ include "iyzitrace.nginxName" . }}:{{ .Values.nginx.service.httpPort }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ Routes
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Ingestion:  /ingest/otlp/v1/{logs,metrics,traces}
+  Query:      /query/v1/{metrics,logs,traces}/
+  OpAMP:      /ingest/opamp/v1/ws
+  Platform:   /api/v1/platform/
+  Console:    /console/
+  Inventory:  /inventory/
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+S3 credentials were auto-generated and stored in:
+  kubectl get secret {{ include "iyzitrace.s3SecretName" . }} -o yaml

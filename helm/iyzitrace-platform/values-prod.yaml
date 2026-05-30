@@ -1,0 +1,434 @@
+# Production override values for iyzitrace-platform.
+#
+# Assumptions:
+# - `iyzitrace-tls` is provided externally (for example via cert-manager).
+# - `iyzitrace-s3-credentials` may be precreated, but the chart can still
+#   generate it if it is missing.
+# - Custom application images are pinned outside this file; the base chart
+#   currently defaults several custom components to `latest`.
+# - `lawrence`, `auth-service`, and `inventory-service` remain single replica
+#   because they use local SQLite storage in the current chart design.
+
+global:
+  # The current chart intentionally uses upstream/community images for several
+  # components (for example Thanos), so Bitnami's image guard must remain on.
+  security:
+    allowInsecureImages: true
+
+gateway:
+  enabled: false
+  className: ""
+  httpRoute:
+    hostnames: []
+
+initCerts:
+  enabled: false
+
+lawrence:
+  replicaCount: 1
+  image:
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 20Gi
+
+authService:
+  replicaCount: 1
+  image:
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 20Gi
+
+inventoryService:
+  replicaCount: 1
+  image:
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 50Gi
+
+nginx:
+  replicaCount: 2
+  ingress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/proxy-body-size: 100m
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    hosts:
+      - host: observability.example.com
+        paths:
+          - path: /
+            pathType: Prefix
+            port: 80
+    tls:
+      - secretName: iyzitrace-tls
+        hosts:
+          - observability.example.com
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+otelCollectors:
+  trace:
+    replicas: 2
+  metric:
+    replicas: 2
+  log:
+    replicas: 2
+
+tempo:
+  storage:
+    trace:
+      s3:
+        region: us-east-1
+      block:
+        version: vParquet4
+        dedicated_columns:
+          - scope: resource
+            name: service.name
+            type: string
+          - scope: resource
+            name: service.namespace
+            type: string
+          - scope: span
+            name: http.method
+            type: string
+          - scope: span
+            name: db.system
+            type: string
+          - scope: span
+            name: messaging.system
+            type: string
+      pool:
+        max_workers: 400
+        queue_depth: 20000
+      search:
+        prefetch_trace_count: 2000
+      blocklist_poll_concurrency: 20
+  ingester:
+    replicas: 3
+    config:
+      replication_factor: 3
+      trace_idle_period: 10s
+      flush_check_period: 10s
+      max_block_bytes: 104857600
+      max_block_duration: 30m
+      complete_block_timeout: 1h
+      flush_all_on_shutdown: true
+    persistence:
+      enabled: true
+      size: 100Gi
+    resources:
+      requests:
+        cpu: "1"
+        memory: 3Gi
+      limits:
+        cpu: "4"
+        memory: 6Gi
+  distributor:
+    replicas: 3
+    config:
+      max_attribute_bytes: 2048
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+  querier:
+    replicas: 2
+    config:
+      trace_by_id:
+        query_timeout: 15s
+      search:
+        query_timeout: 60s
+      max_concurrent_queries: 32
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+  queryFrontend:
+    replicas: 2
+    config:
+      max_outstanding_per_tenant: 4096
+      max_retries: 3
+      search:
+        concurrent_jobs: 400
+        target_bytes_per_job: 67108864
+        max_spans_per_span_set: 100
+      trace_by_id:
+        query_shards: 64
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+  compactor:
+    replicas: 1
+    config:
+      compaction:
+        block_retention: 720h
+        retention_concurrency: 20
+        v2_prefetch_traces_count: 2000
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+  memcached:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  server:
+    grpc_server_max_recv_msg_size: 16777216
+    grpc_server_max_send_msg_size: 16777216
+    http_server_read_timeout: 30s
+    http_server_write_timeout: 30s
+  global_overrides:
+    ingestion:
+      rate_strategy: global
+      rate_limit_bytes: 75000000
+      burst_size_bytes: 150000000
+      max_traces_per_user: 50000
+      retry_info_enabled: true
+    read:
+      max_bytes_per_tag_values_query: 10000000
+    global:
+      max_bytes_per_trace: 15000000
+
+loki:
+  loki:
+    server:
+      log_level: info
+      http_server_read_timeout: 5m
+      http_server_write_timeout: 5m
+      grpc_server_max_concurrent_streams: 1000
+      grpc_server_max_recv_msg_size: 16777216
+      grpc_server_max_send_msg_size: 16777216
+    commonConfig:
+      replication_factor: 3
+    ingester:
+      concurrent_flushes: 96
+      flush_op_timeout: 10m
+      lifecycler:
+        ring:
+          replication_factor: 3
+    compactor:
+      retention_delete_worker_count: 300
+    limits_config:
+      retention_period: 720h
+      ingestion_rate_mb: 72
+      ingestion_burst_size_mb: 144
+      max_global_streams_per_user: 20000
+      reject_old_samples_max_age: 720h
+      max_query_lookback: 720h
+    querier:
+      max_concurrent: 16
+  gateway:
+    replicas: 2
+  ingester:
+    replicas: 3
+    persistence:
+      enabled: true
+      claims:
+        - name: data
+          accessModes:
+            - ReadWriteOnce
+          size: 100Gi
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+  distributor:
+    replicas: 3
+    maxUnavailable: 1
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+  querier:
+    replicas: 2
+    maxUnavailable: 1
+    resources:
+      requests:
+        cpu: "1"
+        memory: 2Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+  queryFrontend:
+    replicas: 2
+    maxUnavailable: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+  queryScheduler:
+    replicas: 2
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+  indexGateway:
+    replicas: 2
+    maxUnavailable: 1
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+  compactor:
+    replicas: 1
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+  chunksCache:
+    enabled: true
+    replicas: 2
+    allocatedMemory: 2048
+  resultsCache:
+    enabled: true
+    replicas: 2
+    allocatedMemory: 1024
+
+prometheus:
+  server:
+    retention: 15d
+    persistentVolume:
+      enabled: true
+      size: 100Gi
+    resources:
+      requests:
+        cpu: "1"
+        memory: 4Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi
+    sidecarContainers:
+      thanos-sidecar:
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+
+thanos:
+  query:
+    replicaCount: 2
+  queryFrontend:
+    enabled: true
+    replicaCount: 2
+  storegateway:
+    enabled: true
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 100Gi
+  compactor:
+    enabled: true
+    replicaCount: 1
+    retentionResolutionRaw: 30d
+    retentionResolution5m: 180d
+    retentionResolution1h: 730d
+    persistence:
+      enabled: true
+      size: 50Gi
+
+seaweedfs:
+  global:
+    enableSecurity: true
+  master:
+    replicas: 3
+    data:
+      type: persistentVolumeClaim
+      size: 10Gi
+  volume:
+    replicas: 3
+    data:
+      type: persistentVolumeClaim
+      size: 500Gi
+  filer:
+    replicas: 1
+    data:
+      type: persistentVolumeClaim
+      size: 50Gi
+    s3:
+      enabled: true
+      enableAuth: true
+      existingConfigSecret: iyzitrace-s3-credentials
+      createBuckets:
+        - name: tempo-data
+        - name: loki-data
+        - name: thanos-time-series

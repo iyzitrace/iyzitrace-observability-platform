@@ -1,0 +1,454 @@
+{{/*
+OpenTelemetryCollector CRDs — created as post-install hook to ensure
+the OTel Operator is ready before applying the CRs.
+*/}}
+
+{{- if and .Values.otelOperator.enabled .Values.otelCollectors.trace.enabled }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ include "iyzitrace.traceCollectorName" . }}
+  labels:
+    {{- include "iyzitrace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trace-collector
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+spec:
+  mode: deployment
+  replicas: {{ .Values.otelCollectors.trace.replicas }}
+  image: {{ .Values.otelCollectors.image }}
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            max_recv_msg_size_mib: 4
+            max_concurrent_streams: 100
+          http:
+            endpoint: 0.0.0.0:4318
+            max_request_body_size: 4194304
+
+    exporters:
+      otlp:
+        endpoint: {{ include "iyzitrace.tempoEndpoint" . }}
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 1000
+
+      otlp/metric:
+        endpoint: {{ include "iyzitrace.metricCollectorName" . }}-collector:14317
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 1000
+
+      otlp/inventory:
+        endpoint: {{ include "iyzitrace.inventoryServiceName" . }}:4317
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 500
+
+      debug:
+        verbosity: detailed
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      resource/add_collector:
+        attributes:
+          - key: collector.name
+            value: trace-otel-enrichment
+            action: upsert
+          - key: collector.pipeline
+            value: traces
+            action: upsert
+
+      transform/type_classifier:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              - set(attributes["type"], "unknown") where attributes["type"] == nil
+              - set(attributes["type"], "http")
+                where attributes["type"] == "unknown" and (attributes["http.method"] != nil or attributes["http.request.method"] != nil or attributes["http.url"] != nil or attributes["http.protocol"] != nil)
+              - set(attributes["type"], "messaging")
+                where (attributes["messaging.system"] != nil or attributes["messaging.destination.name"] != nil) and attributes["type"] == "unknown"
+              - set(attributes["type"], "cache")
+                where (attributes["db.system"] != nil and attributes["db.system"] == "redis") and attributes["type"] == "unknown"
+              - set(attributes["type"], "database")
+                where (attributes["db.system"] != nil or attributes["db.namespace"] != nil or attributes["db.operation.name"] != nil or attributes["db.operation"] != nil) and attributes["type"] == "unknown"
+              - set(attributes["type"], "rpc")
+                where (attributes["rpc.system"] != nil or attributes["rpc.service"] != nil or attributes["rpc.method"] != nil) and attributes["type"] == "unknown"
+
+      transform/span:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              - set(span.attributes["operation.name"], span.name)
+              - set(span.attributes["host.name"], resource.attributes["host.name"]) where resource.attributes["host.name"] != nil
+
+    connectors:
+      spanmetrics:
+        exemplars:
+          enabled: true
+        resource_metrics_cache_size: 1600
+        dimensions:
+          - name: type
+          - name: host.name
+          - name: http.method
+          - name: http.url
+          - name: net.host.port
+        events:
+          enabled: true
+          dimensions:
+            - name: exception.type
+            - name: exception.message
+        metrics_flush_interval: 10s
+      servicegraph:
+        metrics_flush_interval: 10s
+        dimensions:
+          - db.system
+          - db.name
+          - operation.name
+          - type
+          - host.name
+        virtual_node_peer_attributes:
+          - db.system
+          - peer.service
+        virtual_node_extra_label: true
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/add_collector, transform/type_classifier, transform/span, batch]
+          exporters: [debug, otlp, otlp/inventory, spanmetrics, servicegraph]
+        metrics:
+          receivers: [spanmetrics, servicegraph]
+          processors: [memory_limiter, batch]
+          exporters: [otlp/metric]
+{{- end }}
+
+{{- if and .Values.otelOperator.enabled .Values.otelCollectors.metric.enabled }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ include "iyzitrace.metricCollectorName" . }}
+  labels:
+    {{- include "iyzitrace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metric-collector
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "30"
+spec:
+  mode: deployment
+  replicas: {{ .Values.otelCollectors.metric.replicas }}
+  image: {{ .Values.otelCollectors.image }}
+  config:
+    receivers:
+      otlp/trace:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:14317
+            max_recv_msg_size_mib: 4
+            max_concurrent_streams: 100
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            max_recv_msg_size_mib: 4
+            max_concurrent_streams: 100
+          http:
+            endpoint: 0.0.0.0:4318
+            max_request_body_size: 4194304
+
+    exporters:
+      otlphttp:
+        endpoint: "http://{{ include "iyzitrace.prometheusEndpoint" . }}/api/v1/otlp"
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 1000
+
+      prometheusremotewrite:
+        endpoint: http://{{ include "iyzitrace.prometheusEndpoint" . }}/api/v1/write
+        resource_to_telemetry_conversion:
+          enabled: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        remote_write_queue:
+          enabled: true
+          num_consumers: 5
+          queue_size: 10000
+
+      otlp/inventory:
+        endpoint: {{ include "iyzitrace.inventoryServiceName" . }}:4317
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 500
+
+      debug:
+        verbosity: detailed
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      resource/add_collector:
+        attributes:
+          - key: collector.name
+            value: metric-otel-enrichment
+            action: upsert
+          - key: collector.pipeline
+            value: metrics
+            action: upsert
+
+      transform/promote_resource_attrs:
+        error_mode: ignore
+        metric_statements:
+          - set(datapoint.attributes["service.instance.id"], resource.attributes["service.instance.id"]) where resource.attributes["service.instance.id"] != nil
+          - set(datapoint.attributes["service.name"], resource.attributes["service.name"]) where resource.attributes["service.name"] != nil
+          - set(datapoint.attributes["service.namespace"], resource.attributes["service.namespace"]) where resource.attributes["service.namespace"] != nil
+          - set(datapoint.attributes["service.version"], resource.attributes["service.version"]) where resource.attributes["service.version"] != nil
+          - set(datapoint.attributes["host.name"], resource.attributes["host.name"]) where resource.attributes["host.name"] != nil
+          - set(datapoint.attributes["host.id"], resource.attributes["host.id"]) where resource.attributes["host.id"] != nil
+
+      metricstransform:
+        transforms:
+          - include: ^traces_service_graph(.*)$
+            match_type: regexp
+            action: update
+            new_name: iyzitrace_service_graph$1
+          - include: ^traces\.span\.metrics\.(.*)$
+            match_type: regexp
+            action: update
+            new_name: iyzitrace.span.metrics.$1
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        metrics/otlp:
+          receivers: [otlp/trace]
+          processors: [memory_limiter, resource/add_collector, metricstransform, transform/promote_resource_attrs, batch]
+          exporters: [prometheusremotewrite, otlp/inventory]
+        metrics/prometheus:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/add_collector, batch]
+          exporters: [prometheusremotewrite, otlp/inventory]
+{{- end }}
+
+{{- if and .Values.otelOperator.enabled .Values.otelCollectors.log.enabled }}
+---
+apiVersion: opentelemetry.io/v1beta1
+kind: OpenTelemetryCollector
+metadata:
+  name: {{ include "iyzitrace.logCollectorName" . }}
+  labels:
+    {{- include "iyzitrace.labels" . | nindent 4 }}
+    app.kubernetes.io/component: log-collector
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "20"
+spec:
+  mode: deployment
+  replicas: {{ .Values.otelCollectors.log.replicas }}
+  image: {{ .Values.otelCollectors.image }}
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+            max_recv_msg_size_mib: 4
+            max_concurrent_streams: 100
+          http:
+            endpoint: 0.0.0.0:4318
+            max_request_body_size: 4194304
+
+    exporters:
+      otlphttp:
+        endpoint: http://{{ include "iyzitrace.lokiEndpoint" . }}/otlp
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 1000
+
+      prometheusremotewrite:
+        endpoint: http://{{ include "iyzitrace.prometheusEndpoint" . }}/api/v1/write
+        resource_to_telemetry_conversion:
+          enabled: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        remote_write_queue:
+          enabled: true
+          num_consumers: 5
+          queue_size: 10000
+
+      otlphttp/tempo:
+        endpoint: http://{{ include "iyzitrace.tempoHttpEndpoint" . }}
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 1000
+
+      otlp/inventory:
+        endpoint: {{ include "iyzitrace.inventoryServiceName" . }}:4317
+        tls:
+          insecure: true
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+        sending_queue:
+          enabled: true
+          num_consumers: 10
+          queue_size: 500
+
+      debug:
+        verbosity: detailed
+
+    processors:
+      batch:
+        timeout: 5s
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      groupbyattrs:
+        keys:
+          - service.name
+          - service.namespace
+
+      resource/add_collector:
+        attributes:
+          - key: collector.name
+            value: log-otel-enrichment
+            action: upsert
+          - key: collector.pipeline
+            value: logs
+            action: upsert
+
+      transform/log:
+        error_mode: ignore
+        trace_statements:
+          - context: span
+            statements:
+              - set(span.attributes["operation.name"], span.name)
+        log_statements:
+          - context: log
+            statements:
+              - set(resource.attributes["service_name"], resource.attributes["service.name"])
+              - set(resource.attributes["service_namespace"], resource.attributes["service.namespace"])
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        logs:
+          receivers: [otlp]
+          processors: [memory_limiter, resource/add_collector, groupbyattrs, transform/log, batch]
+          exporters: [otlphttp, otlp/inventory]
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [prometheusremotewrite]
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlphttp/tempo]
+{{- end }}

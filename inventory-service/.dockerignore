@@ -1,0 +1,9 @@
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+inventory-service
+.git
+.gitignore
+README.md

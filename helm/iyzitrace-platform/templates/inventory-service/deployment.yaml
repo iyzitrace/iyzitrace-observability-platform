@@ -1,0 +1,69 @@
+{{- if .Values.inventoryService.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "iyzitrace.inventoryServiceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "inventory-service") | nindent 4 }}
+spec:
+  replicas: {{ .Values.inventoryService.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "inventory-service") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "inventory-service") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/inventory-service/configmap.yaml") . | sha256sum }}
+    spec:
+      containers:
+        - name: inventory-service
+          image: "{{ .Values.inventoryService.image.repository }}:{{ .Values.inventoryService.image.tag }}"
+          imagePullPolicy: {{ .Values.inventoryService.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.inventoryService.service.httpPort }}
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: {{ .Values.inventoryService.service.otlpPort }}
+              protocol: TCP
+          env:
+            {{- range $key, $value := .Values.inventoryService.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: data
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.inventoryService.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "iyzitrace.inventoryServiceName" . }}
+        - name: data
+          {{- if .Values.inventoryService.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "iyzitrace.inventoryServiceName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

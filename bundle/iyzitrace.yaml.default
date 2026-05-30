@@ -1,0 +1,39 @@
+version: 1
+
+deployment:
+  network: iyzitrace-network
+  data_dir: /var/lib/iyzitrace/data
+  http_port: 80
+  https_port: 443
+  domain: localhost
+
+secrets:
+  backend: file
+  rotate_on_upgrade: false
+
+services:
+  tempo:
+    image: grafana/tempo:2.10.1
+  loki:
+    image: grafana/loki:3.6.6
+  prometheus:
+    image: prom/prometheus:v3.5.0
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+  thanos:
+    image: quay.io/thanos/thanos:v0.32.5
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.13
+  otel:
+    image: otel/opentelemetry-collector-contrib:0.145.0
+  nginx:
+    image: nginx:1.27-alpine
+
+  # Custom services built from source. Set `image` to use a pre-built image
+  # instead, or override `build` with an absolute path on the host.
+  auth:
+    build: ./auth-service
+  lawrence:
+    build: ./opamp
+  inventory:
+    build: ./inventory-service

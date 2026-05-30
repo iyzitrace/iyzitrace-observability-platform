@@ -1,0 +1,17 @@
+{{- if .Values.authService.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "iyzitrace.authServiceName" . }}
+  labels:
+    {{- include "iyzitrace.componentLabels" (dict "context" . "component" "auth-service") | nindent 4 }}
+spec:
+  type: {{ .Values.authService.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.authService.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "iyzitrace.componentSelectorLabels" (dict "context" . "component" "auth-service") | nindent 4 }}
+{{- end }}

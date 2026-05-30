@@ -1,0 +1,217 @@
+{
+  "uid": "iyzitrace-runtime-jvm",
+  "title": "iyzitrace · JVM Runtime",
+  "description": "OpenTelemetry JVM runtime: heap & non-heap memory pools, GC by collector, classloading, threads by state, CPU. Auto-discovers Java services via telemetry_sdk_language=\"java\".",
+  "tags": ["runtime", "jvm", "java", "iyzitrace", "infrastructure"],
+  "schemaVersion": 39, "version": 1, "editable": true, "graphTooltip": 1,
+  "timezone": "browser", "time": {"from": "now-1h", "to": "now"}, "refresh": "30s",
+  "annotations": {"list": []},
+  "templating": {"list": [
+    {"name": "DS_PROMETHEUS", "label": "Prometheus", "type": "datasource", "query": "prometheus", "current": {"text": "Prometheus (Observability Platform)", "value": "prometheus-platform"}, "hide": 0},
+    {"name": "service", "label": "Service", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(jvm_thread_count, service_name)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".+", "current": {"text": "All", "value": "$__all"}},
+    {"name": "instance", "label": "Instance", "type": "query", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}, "query": {"qryType": 1, "query": "label_values(jvm_thread_count{service_name=~\"${service:regex}\"}, service_instance_id)", "refId": "A"}, "refresh": 2, "sort": 1, "multi": true, "includeAll": true, "allValue": ".*", "current": {"text": "All", "value": "$__all"}}
+  ]},
+  "panels": [
+    {"id": 100, "type": "row", "title": "Process pulse", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0}},
+
+    {"id": 1, "type": "stat", "title": "Active JVMs",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "none"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "blue"}}},
+      "targets": [{"refId": "A", "expr": "count(count by (service_instance_id) (jvm_thread_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}))"}]
+    },
+    {"id": 2, "type": "stat", "title": "JVM build",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 4, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "none", "graphMode": "none", "textMode": "name"},
+      "fieldConfig": {"defaults": {"unit": "none", "color": {"mode": "fixed", "fixedColor": "purple"}}},
+      "targets": [{"refId": "A", "expr": "max by (process_runtime_description) (jvm_thread_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})", "legendFormat": "{{process_runtime_description}}"}]
+    },
+    {"id": 3, "type": "stat", "title": "Heap used",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 9, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "bytes", "decimals": 1, "color": {"mode": "fixed", "fixedColor": "yellow"}}},
+      "targets": [{"refId": "A", "expr": "sum(jvm_memory_used_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"heap\"})"}]
+    },
+    {"id": 4, "type": "stat", "title": "CPU utilization",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 14, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.5}, {"color": "orange", "value": 0.8}, {"color": "red", "value": 0.95}]}}},
+      "targets": [{"refId": "A", "expr": "avg(jvm_cpu_recent_utilization_ratio{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})"}]
+    },
+    {"id": 5, "type": "stat", "title": "Live threads",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 4, "w": 5, "x": 19, "y": 1},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "value", "graphMode": "area"},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "green"}}},
+      "targets": [{"refId": "A", "expr": "sum(jvm_thread_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})"}]
+    },
+
+    {"id": 200, "type": "row", "title": "Heap memory by pool", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5}},
+
+    {"id": 10, "type": "timeseries", "title": "Heap pools — used (stacked)",
+      "description": "Eden / Survivor / Tenured (old) heap usage. Sustained Tenured growth = potential leak; rapid Eden churn = heavy allocation.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 50, "stacking": {"mode": "normal", "group": "A"}}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "Eden Space"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#8AB8FF"}}]},
+        {"matcher": {"id": "byName", "options": "Survivor Space"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byName", "options": "Tenured Gen"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#1F60C4"}}]},
+        {"matcher": {"id": "byName", "options": "Old Gen"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#1F60C4"}}]},
+        {"matcher": {"id": "byName", "options": "G1 Old Gen"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#1F60C4"}}]},
+        {"matcher": {"id": "byName", "options": "G1 Eden Space"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#8AB8FF"}}]},
+        {"matcher": {"id": "byName", "options": "G1 Survivor Space"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (jvm_memory_pool_name) (jvm_memory_used_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"heap\"})", "legendFormat": "{{jvm_memory_pool_name}}"}]
+    },
+    {"id": 11, "type": "timeseries", "title": "Heap pools — used vs committed vs limit",
+      "description": "Used (filled) ≪ Committed (line) ≪ Limit (dashed). When used approaches committed, more memory is reserved from OS. When committed approaches limit, you're near OOM.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "limit.*"}, "properties": [{"id": "custom.lineStyle", "value": {"fill": "dash", "dash": [5,5]}}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]},
+        {"matcher": {"id": "byRegexp", "options": "committed.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byRegexp", "options": "used.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}, {"id": "custom.fillOpacity", "value": 25}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(jvm_memory_used_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"heap\"})", "legendFormat": "used"},
+        {"refId": "B", "expr": "sum(jvm_memory_committed_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"heap\"})", "legendFormat": "committed"},
+        {"refId": "C", "expr": "sum(jvm_memory_limit_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"heap\"})", "legendFormat": "limit"}
+      ]
+    },
+    {"id": 12, "type": "timeseries", "title": "Heap utilization %",
+      "description": "used / limit. Sustained > 80% with frequent GC = memory pressure.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "orange", "value": 0.85}, {"color": "red", "value": 0.95}]}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "thresholdsStyle": {"mode": "dashed"}}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (jvm_memory_used_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"heap\"}) / clamp_min(sum by (service_name) (jvm_memory_limit_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"heap\"}), 1)", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 13, "type": "timeseries", "title": "Heap after last GC",
+      "description": "Sawtooth pattern of used-after-GC reveals the live heap. Steady upward drift here = leak.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 15},
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}, "color": {"mode": "palette-classic"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (jvm_memory_pool_name) (jvm_memory_used_after_last_gc_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})", "legendFormat": "{{jvm_memory_pool_name}}"}]
+    },
+
+    {"id": 300, "type": "row", "title": "Non-heap memory & code cache", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23}},
+
+    {"id": 20, "type": "timeseries", "title": "Non-heap pools — used (stacked)",
+      "description": "Metaspace + CodeHeap (JIT-compiled native code) + Compressed Class Space. Metaspace leak = classloader leak.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 50, "stacking": {"mode": "normal", "group": "A"}}, "color": {"mode": "palette-classic"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (jvm_memory_pool_name) (jvm_memory_used_bytes{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\", jvm_memory_type=\"non_heap\"})", "legendFormat": "{{jvm_memory_pool_name}}"}]
+    },
+
+    {"id": 400, "type": "row", "title": "Garbage collection", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32}},
+
+    {"id": 30, "type": "timeseries", "title": "GC frequency by collector",
+      "description": "Collections/sec by GC name (e.g. Copy / MarkSweepCompact for Serial GC, G1 Young/Mixed for G1).",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 33},
+      "fieldConfig": {"defaults": {"unit": "cps", "custom": {"drawStyle": "bars", "lineWidth": 0, "fillOpacity": 80, "stacking": {"mode": "normal", "group": "A"}}, "color": {"mode": "palette-classic"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["sum", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (jvm_gc_name) (rate(jvm_gc_duration_seconds_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval]))", "legendFormat": "{{jvm_gc_name}}"}]
+    },
+    {"id": 31, "type": "timeseries", "title": "GC pause overhead",
+      "description": "Wall-time fraction spent in stop-the-world pauses. > 5% = tuning needed; > 10% = critical.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 33},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.05}, {"color": "red", "value": 0.1}]}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 25, "thresholdsStyle": {"mode": "dashed"}}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (rate(jvm_gc_duration_seconds_sum{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval]))", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 32, "type": "timeseries", "title": "Average GC pause duration",
+      "description": "rate(sum) / rate(count). Smooth trend; spikes indicate long stop-the-worlds.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 42},
+      "fieldConfig": {"defaults": {"unit": "s", "decimals": 4, "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (jvm_gc_name) (rate(jvm_gc_duration_seconds_sum{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval])) / clamp_min(sum by (jvm_gc_name) (rate(jvm_gc_duration_seconds_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval])), 1e-9)", "legendFormat": "{{jvm_gc_name}}"}]
+    },
+    {"id": 33, "type": "heatmap", "title": "GC pause distribution heatmap",
+      "description": "Histogram buckets of jvm_gc_duration_seconds. Hot bands = consistent pause class; vertical streaks = pause-time spikes.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 42},
+      "fieldConfig": {"defaults": {"unit": "s"}},
+      "options": {"calculate": false, "yAxis": {"unit": "s", "axisPlacement": "left"}, "color": {"mode": "scheme", "scheme": "Spectral", "steps": 64, "exponent": 0.5, "reverse": true}, "cellGap": 1, "filterValues": {"le": 1e-9}, "tooltip": {"mode": "single", "yHistogram": true, "showColorScale": true}, "legend": {"show": true}, "rowsFrame": {"layout": "auto"}},
+      "targets": [{"refId": "A", "expr": "sum by (le) (rate(jvm_gc_duration_seconds_bucket{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval]))", "legendFormat": "{{le}}", "format": "heatmap"}]
+    },
+
+    {"id": 500, "type": "row", "title": "Threads & classloader", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 51}},
+
+    {"id": 40, "type": "timeseries", "title": "Threads by state",
+      "description": "RUNNABLE = doing work. WAITING / TIMED_WAITING = blocked on I/O or locks. BLOCKED = waiting on a monitor.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 52},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 60, "stacking": {"mode": "normal", "group": "A"}}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "runnable"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]},
+        {"matcher": {"id": "byName", "options": "blocked"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]},
+        {"matcher": {"id": "byName", "options": "waiting"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byName", "options": "timed_waiting"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#8AB8FF"}}]},
+        {"matcher": {"id": "byName", "options": "new"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]},
+        {"matcher": {"id": "byName", "options": "terminated"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#8E8E8E"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"refId": "A", "expr": "sum by (jvm_thread_state) (jvm_thread_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})", "legendFormat": "{{jvm_thread_state}}"}]
+    },
+    {"id": 41, "type": "timeseries", "title": "Daemon vs application threads",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 6, "x": 12, "y": 52},
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "line", "lineWidth": 1, "fillOpacity": 60, "stacking": {"mode": "normal", "group": "A"}}}, "overrides": [
+        {"matcher": {"id": "byName", "options": "true"}, "properties": [{"id": "displayName", "value": "daemon"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "#5794F2"}}]},
+        {"matcher": {"id": "byName", "options": "false"}, "properties": [{"id": "displayName", "value": "application"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "#FF9830"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (jvm_thread_daemon) (jvm_thread_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})", "legendFormat": "{{jvm_thread_daemon}}"}]
+    },
+    {"id": 42, "type": "timeseries", "title": "Loaded classes",
+      "description": "Steady growth = classloader leak (often Tomcat hot-reload, scripting engines).",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 9, "w": 6, "x": 18, "y": 52},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "color": {"mode": "fixed", "fixedColor": "#B877D9"}, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (jvm_class_count{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+
+    {"id": 600, "type": "row", "title": "CPU & classloading rates", "collapsed": false, "gridPos": {"h": 1, "w": 24, "x": 0, "y": 61}},
+
+    {"id": 50, "type": "timeseries", "title": "CPU utilization per service",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 62},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 2, "min": 0, "max": 1, "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}, "color": {"mode": "palette-classic"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "avg by (service_name) (jvm_cpu_recent_utilization_ratio{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"})", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 51, "type": "timeseries", "title": "JVM CPU time / sec",
+      "description": "rate(jvm_cpu_time). > 1.0 implies multi-core utilization.",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 62},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 15}, "color": {"mode": "palette-classic"}}},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean"]}, "tooltip": {"mode": "multi"}},
+      "targets": [{"refId": "A", "expr": "sum by (service_name) (rate(jvm_cpu_time_seconds_total{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval]))", "legendFormat": "{{service_name}}"}]
+    },
+    {"id": 52, "type": "timeseries", "title": "Class load / unload rate",
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 62},
+      "fieldConfig": {"defaults": {"unit": "ops", "custom": {"drawStyle": "line", "lineWidth": 2, "fillOpacity": 10}}, "overrides": [
+        {"matcher": {"id": "byRegexp", "options": "loaded.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#73BF69"}}]},
+        {"matcher": {"id": "byRegexp", "options": "unloaded.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "#E02F44"}}]}
+      ]},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(jvm_class_loaded_total{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval]))", "legendFormat": "loaded/s"},
+        {"refId": "B", "expr": "sum(rate(jvm_class_unloaded_total{service_name=~\"${service:regex}\", service_instance_id=~\"${instance:regex}\"}[$__rate_interval]))", "legendFormat": "unloaded/s"}
+      ]
+    }
+  ]
+}

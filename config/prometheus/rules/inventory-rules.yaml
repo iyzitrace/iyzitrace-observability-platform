@@ -1,0 +1,87 @@
+groups:
+- name: inventory_v2_metrics
+  interval: 30s
+  rules:
+    # --- Freshness / last-seen ---
+    - record: machine_last_seen_seconds
+      expr: |
+        time() - max by (cloud_region,host_name) (timestamp(system_cpu_time_seconds_total))
+
+    # --- CPU usage % per host ---
+    - record: inventory_machine_cpu_usage_percent
+      expr: |
+        (
+          sum by (cloud_region,host_name) (rate(system_cpu_time_seconds_total{state!~"idle|iowait"}[5m]))
+          /
+          sum by (cloud_region,host_name) (rate(system_cpu_time_seconds_total[5m]))
+        ) * 100
+
+    # --- Memory used / total / % ---
+    - record: inventory_machine_memory_used_bytes
+      expr: max by (cloud_region,host_name) (system_memory_usage_bytes{state="used"})
+    - record: inventory_machine_memory_total_bytes
+      expr: |
+        max by (cloud_region,host_name) (
+         system_memory_usage_bytes{state=~"used|free|available"}
+        )
+    - record: inventory_machine_memory_usage_percent
+      expr: |
+        100 * inventory_machine_memory_used_bytes
+            / inventory_machine_memory_total_bytes
+    - record: inventory_machine_memory_used_gb
+      expr: inventory_machine_memory_used_bytes / 1024^3
+    - record: inventory_machine_memory_total_gb
+      expr: inventory_machine_memory_total_bytes / 1024^3
+
+    # --- Inventory base (host-list anchor; kept at 30s so __inv_info fallback is always fresh) ---
+    - record: __inv_base
+      expr: max by (cloud_region,host_name) (system_cpu_time_seconds_total) * 0 + 1
+
+    # --- Status classification ---
+    - record: inventory_machine_status
+      labels: {status: "healthy"}
+      expr: (machine_last_seen_seconds <= 60)
+    - record: inventory_machine_status
+      labels: {status: "degraded"}
+      expr: (machine_last_seen_seconds > 60 and machine_last_seen_seconds <= 300)
+    - record: inventory_machine_status
+      labels: {status: "down"}
+      expr: (machine_last_seen_seconds > 300)
+
+- name: inventory_v2_metadata
+  interval: 5m
+  rules:
+    # 2) inherit wanted labels from system_cpu_time_seconds_total (use * with group_left)
+    - record: __inv_join
+      expr: |
+        __inv_base
+        * on(cloud_region,host_name) group_left(host_arch, host_ip, host_mac, os_description, os_type)
+        max by(cloud_region, host_name, host_arch, host_ip, host_mac, os_description, os_type) (system_cpu_time_seconds_total)
+
+    # 3) infrastructureType classification (pod > node > container > vm > host)
+    - record: __inv_info
+      labels: {infrastructureType: "pod"}
+      expr: __inv_join and on(host_name) target_info{k8s_pod_name=~".+"}
+
+    - record: __inv_info
+      labels: {infrastructureType: "node"}
+      expr: __inv_join and on(host_name) target_info{k8s_node_name=~".+"}
+
+    - record: __inv_info
+      labels: {infrastructureType: "container"}
+      expr: __inv_join and on(host_name) (target_info{k8s_container_name=~".+"} unless target_info{k8s_pod_name=~".+"})
+
+    - record: __inv_info
+      labels: {infrastructureType: "vm"}
+      expr: __inv_join and on(host_name) (
+              target_info{cloud_provider=~".+"}
+            unless (target_info{k8s_pod_name=~".+"} or target_info{k8s_node_name=~".+"} or target_info{k8s_container_name=~".+"})
+            )
+    - record: __inv_info
+      labels: {infrastructureType: "host"}
+      expr: __inv_join unless on(host_name) (
+              target_info{k8s_pod_name=~".+"}
+            or target_info{k8s_node_name=~".+"}
+            or target_info{k8s_container_name=~".+"}
+            or target_info{cloud_provider=~".+"}
+            )
