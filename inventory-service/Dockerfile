@@ -15,7 +15,7 @@ RUN CGO_ENABLED=1 GOOS=linux go build -o inventory-service ./cmd/inventory-servi
 # =============================================================================
 # Stage 2: Production
 # =============================================================================
-FROM alpine:3.20
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates tzdata curl sqlite-libs
 
