@@ -15,7 +15,10 @@ WORKDIR /app
 
 # Install production deps only
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+    && rm -f package.json package-lock.json
 
 # Install openssl and zip for certificate generation and bundling
 RUN apk add --no-cache openssl zip
@@ -34,4 +37,4 @@ RUN mkdir -p data && chown -R node:node data
 
 EXPOSE 8080
 
-CMD ["npm", "start"]
+CMD ["node", "dist/index.js"]
