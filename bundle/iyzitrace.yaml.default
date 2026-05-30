@@ -32,8 +32,8 @@ services:
   # Custom services built from source. Set `image` to use a pre-built image
   # instead, or override `build` with an absolute path on the host.
   auth:
-    build: ./auth-service
+    image: ghcr.io/iyzitrace/auth-service:latest
   lawrence:
-    build: ./opamp
+    image: ghcr.io/iyzitrace/opamp:latest
   inventory:
-    build: ./inventory-service
+    image: ghcr.io/iyzitrace/inventory-service:latest
