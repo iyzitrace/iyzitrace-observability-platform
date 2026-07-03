@@ -5,6 +5,7 @@ Start here for IyziTrace Observability Platform documentation.
 ## Guides
 
 - [Architecture](ARCHITECTURE.md)
+- [Multitenancy & License Management](architecture/multitenancy-licensing.md)
 - [CLI](cli.md)
 - [Minikube installation](minikube-installation.md)
 - [Kubernetes production installation](kubernetes-production-installation.md)

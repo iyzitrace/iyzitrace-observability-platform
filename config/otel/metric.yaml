@@ -11,9 +11,16 @@ receivers:
         endpoint: 0.0.0.0:4317
         max_recv_msg_size_mib: 4
         max_concurrent_streams: 100
+        # Exposes incoming metadata (incl. X-Scope-OrgID) via request
+        # context. Prometheus/Thanos have no native tenant header (unlike
+        # Loki/Tempo) — this only stamps the resource attribute for now;
+        # Phase 3 adds the label-enforcement layer that consumes it. See
+        # docs/architecture/multitenancy-licensing.md §8.
+        include_metadata: true
       http:
         endpoint: 0.0.0.0:4318
         max_request_body_size: 4194304
+        include_metadata: true
 
 exporters:
   prometheusremotewrite:
@@ -65,6 +72,18 @@ processors:
         value: metrics
         action: upsert
 
+  # Multitenancy — stamps X-Scope-OrgID from client metadata for metrics
+  # sent directly by agents (via nginx). NOT used on the metrics/otlp
+  # pipeline: those datapoints arrive from trace-otel-enrichment's
+  # spanmetrics/servicegraph connectors over an internal collector-to-
+  # collector hop with no nginx-forwarded metadata — they already carry
+  # tenant.org_id as a resource attribute set upstream in trace.yaml.
+  resource/tenant:
+    attributes:
+      - key: tenant.org_id
+        action: upsert
+        from_context: metadata.x-scope-orgid
+
   transform/promote_resource_attrs:
     error_mode: ignore
     metric_statements:
@@ -109,5 +128,5 @@ service:
       exporters: [prometheusremotewrite, otlp_grpc/inventory]
     metrics/prometheus:
       receivers: [otlp]
-      processors: [memory_limiter, resource/add_collector, batch]
+      processors: [memory_limiter, resource/tenant, resource/add_collector, batch]
       exporters: [prometheusremotewrite, otlp_grpc/inventory]

@@ -5,15 +5,26 @@ receivers:
         endpoint: 0.0.0.0:4317
         max_recv_msg_size_mib: 4
         max_concurrent_streams: 100
+        # Exposes incoming gRPC metadata (incl. X-Scope-OrgID, forwarded by
+        # nginx from auth-service's resolved tenant scope) via the request
+        # context, so the resource/tenant processor below can stamp it onto
+        # every span. See docs/architecture/multitenancy-licensing.md §7-8.
+        include_metadata: true
       http:
         endpoint: 0.0.0.0:4318
         max_request_body_size: 4194304
+        include_metadata: true
 
 exporters:
   otlp_grpc:
     endpoint: tempo:4317
     tls:
       insecure: true
+    # Propagates the tenant scope captured into context by the receiver back
+    # out as an X-Scope-OrgID header/metadata entry on the request to Tempo,
+    # which enforces multitenancy_enabled at the storage layer.
+    auth:
+      authenticator: headers_setter
     retry_on_failure:
       enabled: true
       initial_interval: 5s
@@ -72,6 +83,16 @@ processors:
       - key: collector.pipeline
         value: traces
         action: upsert
+
+  # Multitenancy — stamps the X-Scope-OrgID captured from client
+  # metadata (nginx-injected, see config/nginx/nginx.conf) onto every span
+  # as a resource attribute. Empty when no tenant scope was resolved
+  # (platform keys, or API-key enforcement disabled).
+  resource/tenant:
+    attributes:
+      - key: tenant.org_id
+        action: upsert
+        from_context: metadata.x-scope-orgid
 
   transform/type_classifier:
     error_mode: ignore
@@ -240,6 +261,14 @@ extensions:
     endpoint: 0.0.0.0:13133
   zpages:
     endpoint: 0.0.0.0:55679
+  # Re-emits the tenant scope carried in the incoming request's client
+  # metadata as an X-Scope-OrgID header/metadata entry on outgoing exporter
+  # requests. Referenced by exporters via `auth.authenticator`.
+  headers_setter:
+    headers:
+      - action: upsert
+        key: X-Scope-OrgID
+        from_context: metadata.x-scope-orgid
 
 service:
   telemetry:
@@ -250,11 +279,11 @@ service:
               prometheus:
                 host: "0.0.0.0"
                 port: 8888
-  extensions: [health_check, zpages]
+  extensions: [health_check, zpages, headers_setter]
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, resource/add_collector, transform/type_classifier, transform/span, batch]
+      processors: [memory_limiter, resource/tenant, resource/add_collector, transform/type_classifier, transform/span, batch]
       exporters: [otlp_grpc, otlp_grpc/inventory, spanmetrics, servicegraph]
     metrics:
       receivers: [spanmetrics, servicegraph]

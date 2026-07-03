@@ -48,3 +48,12 @@ config/thanos/bucket.yaml
 
 *.tgz
 cli/bin/iyzitrace
+
+# License dev tooling (private keys / signed test tokens — never commit)
+scripts/license/dev-private.pem
+scripts/license/dev-public.pem
+scripts/license/license.lic
+scripts/license/*.lic
+
+# Licensing slide deck used as design-source-only material (not shipped)
+/Lisans_Yonetimi_Mimarisi.pptx

@@ -203,7 +203,10 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost/console/
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost/inventory/health
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost/api/v1/platform/health
 
-# Send a test OTLP trace
+# Send a test OTLP trace — requires a license to be installed first (Console
+# → Security → License), otherwise this returns 403 { reason: "license_required" }.
+# See docs/architecture/multitenancy-licensing.md §16.0 and scripts/license/README.md
+# for generating a local test license.
 curl -sS -X POST http://localhost/ingest/otlp/v1/traces \
   -H 'Content-Type: application/json' \
   --data '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"smoke"}}]},"scopeSpans":[{"spans":[{"traceId":"5b8aa5a2d2c872e8321cf37308d69df2","spanId":"051581bf3cb55c13","name":"smoke","startTimeUnixNano":"1779660000000000000","endTimeUnixNano":"1779660001000000000","kind":1}]}]}]}'

@@ -1,17 +1,35 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { getDB } from '../config/database';
 import bcrypt from 'bcryptjs';
+import { getDB } from '../config/database';
+import { getJwtSecret } from '../config/secrets';
+import { LicenseFeatureError, assertFeatureAllowed, assertIngestionAllowed } from '../services/licenseService';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
+// Reserved X-License-Capability value nginx sets on the three OTLP ingest
+// locations (traces/logs/metrics). Uses assertIngestionAllowed's no-license
+// default (blocked) rather than assertFeatureAllowed's (open) — see
+// docs/architecture/multitenancy-licensing.md §16.0.
+const INGEST_CAPABILITY = 'ingest';
+
+const JWT_SECRET = getJwtSecret();
+
+export interface AuthenticatedUser {
+    id?: number;
+    username?: string;
+    role?: string;
+    type?: 'jwt' | 'api_key';
+    tenantId?: string;
+    subtenantId?: string;
+    orgId?: string;
+}
 
 export interface AuthRequest extends Request {
-    user?: any;
+    user?: AuthenticatedUser;
 }
 
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction) => {
     const db = getDB();
-    const authContext = req.header('X-Auth-Context'); // 'agent' or 'external'
+    const authContext = req.header('X-Auth-Context'); // 'agent' | 'external' | 'platform'
 
     // Fetch settings
     const settingsRows = await db.all('SELECT key, value FROM settings');
@@ -20,6 +38,33 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     const agentKey = settings['security.agent.api_key'];
     const externalKey = settings['security.external.api_key'];
     const forceSsl = settings['security.force_ssl'];
+
+    // --- License Gate ---
+    // Runs unconditionally, ahead of the agent/external toggles below: a
+    // capability nginx marks (X-License-Capability) must be enforced even
+    // when API-key enforcement is off. Two different rules apply —
+    // "ingest" (traces/logs/metrics ingestion) requires a genuinely usable
+    // license and blocks outright with none installed; every other named
+    // capability ("inventory", "agent_management", "external_query",
+    // "alerting") is a no-op with no license installed and only becomes an
+    // allow-list once one exists. See services/licenseService.ts and
+    // docs/architecture/multitenancy-licensing.md §16.
+    const capability = req.header('X-License-Capability');
+    if (capability) {
+        try {
+            if (capability === INGEST_CAPABILITY) {
+                await assertIngestionAllowed();
+            } else {
+                await assertFeatureAllowed(capability);
+            }
+        } catch (err) {
+            if (err instanceof LicenseFeatureError) {
+                const reason = capability === INGEST_CAPABILITY ? 'license_required' : 'license_feature';
+                return res.status(403).json({ error: err.message, reason, feature: capability });
+            }
+            throw err;
+        }
+    }
 
     // --- Global SSL Check (API/Agents) ---
     if (forceSsl) {
@@ -31,7 +76,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
         }
     }
 
-    // --- Helper: Check API Key ---
+    // --- Helper: Check API Key / JWT, resolve tenancy scope ---
     const checkApiKey = async (): Promise<boolean> => {
         let token: string | undefined;
 
@@ -53,17 +98,65 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
         if (!token) return false;
 
         try {
-            // Try JWT
+            // JWT session (admin/platform credential — carries no tenant scope)
             if (token.includes('.')) {
-                const decoded = jwt.verify(token, JWT_SECRET);
-                req.user = decoded;
+                const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUser;
+                req.user = { ...decoded, type: 'jwt' };
                 return true;
             }
-            // Try API Key
-            const keys = await db.all('SELECT * FROM api_keys');
-            for (const k of keys) {
+
+            // API key: look up by prefix first (avoids an O(n) bcrypt scan over
+            // every key on every request), and exclude revoked keys — a revoked
+            // key must never authenticate again.
+            const prefix = token.substring(0, 7);
+            const candidates = await db.all(
+                'SELECT * FROM api_keys WHERE prefix = ? AND revoked_at IS NULL',
+                prefix
+            );
+
+            for (const k of candidates) {
                 if (await bcrypt.compare(token, k.key_hash)) {
-                    req.user = { id: k.id, role: k.role, type: 'api_key' };
+                    // A key bound to a suspended (or deleted) tenant/subtenant
+                    // must not authenticate — status alone was previously
+                    // stored but never enforced here.
+                    if (k.subtenant_id) {
+                        const sub = await db.get(
+                            "SELECT org_id FROM subtenants WHERE id = ? AND deleted_at IS NULL AND status = 'active'",
+                            k.subtenant_id
+                        );
+                        if (!sub) return false;
+                        if (k.tenant_id) {
+                            const tenant = await db.get(
+                                "SELECT id FROM tenants WHERE id = ? AND deleted_at IS NULL AND status = 'active'",
+                                k.tenant_id
+                            );
+                            if (!tenant) return false;
+                        }
+                        req.user = {
+                            id: k.id,
+                            role: k.role,
+                            type: 'api_key',
+                            tenantId: k.tenant_id || undefined,
+                            subtenantId: k.subtenant_id,
+                            orgId: sub.org_id
+                        };
+                        return true;
+                    }
+
+                    if (k.tenant_id) {
+                        const tenant = await db.get(
+                            "SELECT id FROM tenants WHERE id = ? AND deleted_at IS NULL AND status = 'active'",
+                            k.tenant_id
+                        );
+                        if (!tenant) return false;
+                    }
+
+                    req.user = {
+                        id: k.id,
+                        role: k.role,
+                        type: 'api_key',
+                        tenantId: k.tenant_id || undefined
+                    };
                     return true;
                 }
             }

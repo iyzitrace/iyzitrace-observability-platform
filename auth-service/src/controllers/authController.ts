@@ -2,11 +2,13 @@ import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getDB } from '../config/database';
+import { getJwtSecret } from '../config/secrets';
+import { AuthRequest } from '../middleware/auth';
 import crypto from 'crypto';
 import fs from 'fs';
 import tls from 'tls';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
+const JWT_SECRET = getJwtSecret();
 
 // --- Auth Controller ---
 
@@ -58,9 +60,16 @@ export const login = async (req: Request, res: Response) => {
     }
 };
 
-export const validate = (req: Request, res: Response) => {
-    // Middleware already validated security/token.
-    // If we reached here, we are good.
+export const validate = (req: AuthRequest, res: Response) => {
+    // Middleware already validated security/token. Surface the resolved
+    // tenancy scope as response headers so nginx's auth_request_set can
+    // forward it downstream as X-Scope-OrgID (see
+    // docs/architecture/multitenancy-licensing.md §7). Platform/admin
+    // credentials resolve no scope and set nothing.
+    const user = req.user;
+    if (user?.orgId) res.setHeader('X-Scope-OrgID', user.orgId);
+    if (user?.tenantId) res.setHeader('X-Tenant-Id', user.tenantId);
+    if (user?.subtenantId) res.setHeader('X-Subtenant-Id', user.subtenantId);
     res.status(200).send('OK');
 };
 
@@ -106,14 +115,45 @@ export const updateConfig = async (req: Request, res: Response) => {
 
 export const getKeys = async (req: Request, res: Response) => {
     const db = getDB();
-    const keys = await db.all('SELECT id, name, prefix, role, created_at, revoked_at FROM api_keys ORDER BY created_at DESC');
+    const keys = await db.all(`
+        SELECT k.id, k.name, k.prefix, k.role, k.created_at, k.revoked_at,
+               k.tenant_id, k.subtenant_id, s.org_id, s.name as subtenant_name, t.name as tenant_name
+        FROM api_keys k
+        LEFT JOIN subtenants s ON s.id = k.subtenant_id
+        LEFT JOIN tenants t ON t.id = k.tenant_id
+        ORDER BY k.created_at DESC
+    `);
     res.json(keys);
 };
 
 export const createKey = async (req: Request, res: Response) => {
     try {
         const { name, role } = req.body;
+        let { tenant_id, subtenant_id } = req.body;
         const db = getDB();
+
+        // A key may be scoped to a subtenant (the hard telemetry-isolation
+        // unit — see docs/architecture/multitenancy-licensing.md §3), to a
+        // bare tenant (grouping only, no org_id), or to neither (platform
+        // key). Validate the scope actually exists and is internally
+        // consistent before minting a credential for it.
+        if (subtenant_id) {
+            const sub = await db.get(
+                'SELECT * FROM subtenants WHERE id = ? AND deleted_at IS NULL',
+                subtenant_id
+            );
+            if (!sub) return res.status(400).json({ error: 'Unknown subtenant_id' });
+            if (tenant_id && sub.tenant_id !== tenant_id) {
+                return res.status(400).json({ error: 'subtenant_id does not belong to tenant_id' });
+            }
+            // Auto-derive tenant_id from the subtenant so the key's scope
+            // stays internally consistent even if the caller only sent
+            // subtenant_id (the Console UI does this).
+            tenant_id = sub.tenant_id;
+        } else if (tenant_id) {
+            const tenant = await db.get('SELECT * FROM tenants WHERE id = ? AND deleted_at IS NULL', tenant_id);
+            if (!tenant) return res.status(400).json({ error: 'Unknown tenant_id' });
+        }
 
         // Generate a random key
         const rawKey = 'sk-' + crypto.randomBytes(16).toString('hex');
@@ -121,12 +161,20 @@ export const createKey = async (req: Request, res: Response) => {
         const hash = await bcrypt.hash(rawKey, 10);
 
         const result = await db.run(
-            'INSERT INTO api_keys (name, prefix, key_hash, role) VALUES (?, ?, ?, ?)',
-            name, prefix, hash, role
+            'INSERT INTO api_keys (name, prefix, key_hash, role, tenant_id, subtenant_id) VALUES (?, ?, ?, ?, ?, ?)',
+            name, prefix, hash, role, tenant_id || null, subtenant_id || null
         );
 
         res.json({
-            api_key: { id: result.lastID, name, prefix, role, created_at: new Date() },
+            api_key: {
+                id: result.lastID,
+                name,
+                prefix,
+                role,
+                tenant_id: tenant_id || null,
+                subtenant_id: subtenant_id || null,
+                created_at: new Date()
+            },
             raw_key: rawKey
         });
     } catch (err: any) {

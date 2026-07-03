@@ -1,0 +1,13 @@
+{
+  "sub": "acc_dev_local",
+  "customer": "IyziTrace Dev",
+  "edition": "enterprise",
+  "iat": 1735689600,
+  "exp": 1893456000,
+  "grace_days": 14,
+  "limits": {
+    "tenants": { "max": 3 },
+    "subtenants": { "max_total": 12 }
+  },
+  "features": ["crm", "sap", "online"]
+}

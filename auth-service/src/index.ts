@@ -8,6 +8,10 @@ import { initDB } from './config/database';
 import authRoutes from './routes/auth';
 import healthRoutes from './routes/health';
 import licenseRoutes from './routes/license';
+import tenantRoutes from './routes/tenants';
+import platformLicenseRoutes from './routes/platformLicense';
+import { checkRevocationHeartbeat } from './services/licenseService';
+import { regenerateOverrides } from './services/tenancyOverridesService';
 const app = express();
 const PORT = process.env.PORT || 8080;
 const uiPath = path.join(__dirname, '../ui/dist');
@@ -69,6 +73,8 @@ app.use(async (req, res, next) => {
 
 // Routes
 app.use('/auth', authRoutes);
+app.use('/auth', tenantRoutes);        // /auth/tenants, /auth/subtenants
+app.use('/auth', platformLicenseRoutes); // /auth/license/install, /auth/license/status
 app.use('/', healthRoutes);          // System health endpoints (e.g. /system/status)
 app.use('/api/v1/license', licenseRoutes);  // direct access
 app.use('/license', licenseRoutes);          // via nginx /api/v1/platform/ rewrite
@@ -135,10 +141,26 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(uiPath, 'index.html'));
 });
 
+// Optional SaaS-ready license heartbeat (see services/licenseService.ts).
+// Entirely inert unless LICENSE_HEARTBEAT_URL is configured — offline
+// installs make zero network calls here.
+const startLicenseHeartbeat = () => {
+    const heartbeatUrl = process.env.LICENSE_HEARTBEAT_URL;
+    if (!heartbeatUrl) return;
+
+    const intervalMs = parseInt(process.env.LICENSE_HEARTBEAT_INTERVAL_MS || '', 10) || 6 * 60 * 60 * 1000;
+    checkRevocationHeartbeat().catch(() => { });
+    setInterval(() => {
+        checkRevocationHeartbeat().catch(() => { });
+    }, intervalMs);
+};
+
 // Start
 const start = async () => {
     try {
         await initDB();
+        await regenerateOverrides();
+        startLicenseHeartbeat();
         app.listen(PORT, () => {
             console.log(`Auth Service running on port ${PORT}`);
         });

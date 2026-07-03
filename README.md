@@ -96,6 +96,10 @@ Wait for all services to initialize. You can check the health of the system dire
   
 *Note: The Console UI features a built-in dashboard card that pulls the live status of backend services (Tempo, Loki, Prometheus, and Authentication).*
 
+### 3. Install a License
+
+**The platform does not accept any telemetry (traces, logs, or metrics) until a license is installed.** This is enforced at the gateway regardless of any other security setting. Install one from the Console (**Security → License → Install License**) before sending data — see [docs/architecture/multitenancy-licensing.md](docs/architecture/multitenancy-licensing.md#160-telemetry-ingestion-gating--license-required-no-exceptions) for the token contract, and `scripts/license/README.md` for generating a local test license during development.
+
 ---
 
 ## 🖥️ User Guide

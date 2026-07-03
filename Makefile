@@ -18,6 +18,13 @@ dirs:
 	@mkdir -p data/thanos-compactor
 	@mkdir -p data/inventory
 	@mkdir -p data/alertmanager
+	@mkdir -p data/tenancy
+	@# Tempo/Loki bind-mount these as single files; pre-create them so Docker
+	@# never creates a directory in their place on first boot (see
+	@# docs/architecture/multitenancy-licensing.md §16). auth-service
+	@# overwrites them with real content as soon as it starts.
+	@[ -f data/tenancy/tempo-overrides.yaml ] || echo 'overrides: {}' > data/tenancy/tempo-overrides.yaml
+	@[ -f data/tenancy/loki-runtime-config.yaml ] || echo 'overrides: {}' > data/tenancy/loki-runtime-config.yaml
 	@echo "Data directories created."
 
 # Generate credentials and config files
@@ -71,7 +78,7 @@ test:
 	$(MAKE) -C cli test
 	cd inventory-service && go test ./...
 	cd opamp && go test ./...
-	cd auth-service && npm ci && npm run build
+	cd auth-service && npm ci && npm run build && npm test
 
 validate: gen-creds
 	docker compose config --quiet

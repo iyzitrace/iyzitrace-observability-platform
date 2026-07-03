@@ -8,6 +8,9 @@ let state = {
     user: JSON.parse(localStorage.getItem('auth_user') || 'null'),
     config: { agent_api_key: false, external_api_key: false, setup_complete: false },
     keys: [],
+    tenants: [],
+    subtenants: [],
+    license: null,
     systemStatus: null,
     autoRefresh: JSON.parse(localStorage.getItem('ui_auto_refresh') || 'false'),
     theme: localStorage.getItem('ui_theme') || 'dark'
@@ -270,12 +273,158 @@ const renderLogin = () => {
     };
 };
 
+const LICENSE_STATUS_LABEL = {
+    none: 'No License Installed',
+    active: 'Active',
+    grace: 'Grace Period',
+    expired: 'Expired',
+    restricted: 'Restricted (clock check failed)'
+};
+
+const licenseStatusClass = (status) => {
+    if (status === 'active') return 'status-online';
+    if (status === 'grace') return 'status-online';
+    return 'status-offline';
+};
+
+const LICENSE_FEATURE_LABEL = {
+    inventory: 'Inventory / Topology Discovery',
+    agent_management: 'Agent Management (Lawrence remote config)',
+    external_query: 'External Query API (Tempo/Loki/Thanos)',
+    alerting: 'Alerting (Alertmanager)'
+};
+
+// Telemetry ingestion (traces/logs/metrics) is NOT one of the optional
+// features above — it requires a genuinely usable license (active/grace)
+// unconditionally, with no "unlisted = open" fallback. See
+// docs/architecture/multitenancy-licensing.md §16.0.
+const INGESTION_ALLOWED_STATUSES = ['active', 'grace'];
+
+const renderLicenseSection = () => {
+    const lic = state.license;
+    const status = lic?.status || 'none';
+    const tenantsMax = lic?.limits?.tenants?.max ?? '—';
+    const subtenantsMax = lic?.limits?.subtenants?.max_total ?? '—';
+    const tenantsUsed = lic?.tenantsUsed ?? 0;
+    const subtenantsUsed = lic?.subtenantsUsed ?? 0;
+    const tracesRetention = lic?.limits?.traces?.retention_days;
+    const logsRetention = lic?.limits?.logs?.retention_days;
+    const features = lic?.features ?? [];
+    const ingestionAllowed = INGESTION_ALLOWED_STATUSES.includes(status);
+
+    return `
+        <div class="section">
+            <div class="section-header" style="display:flex; justify-content:space-between; align-items:center">
+                <h3>
+                    <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                    License
+                </h3>
+                <button class="btn-create" style="width:auto; display:flex; align-items:center; gap:8px" onclick="showInstallLicenseModal()">
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                    Install License
+                </button>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:24px; align-items:center; margin-bottom:16px">
+                <span class="status-badge ${licenseStatusClass(status)}">${LICENSE_STATUS_LABEL[status] || status}</span>
+                <span class="status-badge ${ingestionAllowed ? 'status-online' : 'status-offline'}">
+                    ${ingestionAllowed ? '&check;' : '&times;'} Telemetry Ingestion (traces/logs/metrics)
+                </span>
+                ${lic?.customer ? `<span style="color:var(--text-secondary)">${lic.customer} &middot; ${lic.edition || ''}</span>` : ''}
+                ${lic?.exp ? `<span style="color:var(--text-secondary)">Expires ${new Date(lic.exp * 1000).toLocaleDateString()}</span>` : ''}
+                ${lic?.remoteRevoked ? `<span style="color:var(--error-color)">Revoked remotely via license heartbeat</span>` : ''}
+            </div>
+            ${!ingestionAllowed ? `<p style="color:var(--error-color); font-size:13px">No agent or API client can send traces, logs, or metrics right now — telemetry ingestion always requires an active or grace-period license.</p>` : ''}
+            ${lic ? `
+            <table>
+                <thead><tr><th>Resource</th><th>Used</th><th>Limit</th></tr></thead>
+                <tbody>
+                    <tr><td>Tenants</td><td>${tenantsUsed}</td><td>${tenantsMax}</td></tr>
+                    <tr><td>Subtenants</td><td>${subtenantsUsed}</td><td>${subtenantsMax}</td></tr>
+                    ${tracesRetention ? `<tr><td>Trace retention</td><td colspan="2">${tracesRetention} days</td></tr>` : ''}
+                    ${logsRetention ? `<tr><td>Log retention</td><td colspan="2">${logsRetention} days</td></tr>` : ''}
+                </tbody>
+            </table>
+            <div style="margin-top:16px">
+                <strong style="font-size:13px; color:var(--text-secondary)">Licensed Optional Modules</strong>
+                <div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:8px">
+                    ${Object.keys(LICENSE_FEATURE_LABEL).map(key => `
+                        <span class="status-badge ${features.includes(key) ? 'status-online' : 'status-offline'}" title="${LICENSE_FEATURE_LABEL[key]}">
+                            ${features.includes(key) ? '&check;' : '&times;'} ${LICENSE_FEATURE_LABEL[key]}
+                        </span>
+                    `).join('')}
+                </div>
+            </div>
+            ` : '<p style="color:var(--text-secondary)">No license installed — telemetry ingestion is blocked and no tenants/subtenants can be created until one is uploaded. The optional modules above (Inventory, Agent Management, External Query, Alerting) remain open until a license restricts them.</p>'}
+        </div>
+    `;
+};
+
+const renderTenantsSection = () => {
+    const subtenantsByTenant = (tenantId) => state.subtenants.filter(s => s.tenant_id === tenantId);
+
+    return `
+        <div class="section">
+            <div class="section-header" style="display:flex; justify-content:space-between; align-items:center">
+                <h3>
+                    <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 6v-3a1 1 0 011-1h2a1 1 0 011 1v3"/></svg>
+                    Tenants &amp; Subtenants
+                </h3>
+                <button class="btn-create" style="width:auto; display:flex; align-items:center; gap:8px" onclick="showCreateTenantModal()">
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    New Tenant
+                </button>
+            </div>
+            ${state.tenants.length > 0 ? state.tenants.map(t => `
+                <div style="border:1px solid var(--border-color); border-radius:8px; padding:12px 16px; margin-bottom:12px">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
+                        <div>
+                            <strong>${t.name}</strong>
+                            <code style="margin-left:8px">${t.slug}</code>
+                            <span class="status-badge ${t.status === 'active' ? 'status-online' : 'status-offline'}" style="margin-left:8px">${t.status}</span>
+                        </div>
+                        <div style="display:flex; gap:8px">
+                            <button class="secondary" style="width:auto; padding:4px 8px; font-size:12px" onclick="showCreateSubtenantModal('${t.id}')">+ Subtenant</button>
+                            ${t.status === 'active'
+                                ? `<button class="secondary" style="width:auto; padding:4px 8px; font-size:12px" onclick="suspendTenant('${t.id}')">Suspend</button>`
+                                : `<button class="secondary" style="width:auto; padding:4px 8px; font-size:12px" onclick="reactivateTenant('${t.id}')">Reactivate</button>`}
+                            <button class="danger" style="width:auto; padding:4px 8px; font-size:12px" onclick="deleteTenant('${t.id}')">Delete</button>
+                        </div>
+                    </div>
+                    ${subtenantsByTenant(t.id).length > 0 ? `
+                    <table style="margin-top:12px">
+                        <thead><tr><th>Subtenant</th><th>Org ID (X-Scope-OrgID)</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody>
+                            ${subtenantsByTenant(t.id).map(s => `
+                                <tr>
+                                    <td>${s.name} <code>${s.slug}</code></td>
+                                    <td><code>${s.org_id}</code></td>
+                                    <td><span class="status-badge ${s.status === 'active' ? 'status-online' : 'status-offline'}">${s.status}</span></td>
+                                    <td>
+                                        ${s.status === 'active'
+                                            ? `<button class="secondary" style="width:auto; padding:4px 8px; font-size:12px" onclick="suspendSubtenant('${s.id}')">Suspend</button>`
+                                            : `<button class="secondary" style="width:auto; padding:4px 8px; font-size:12px" onclick="reactivateSubtenant('${s.id}')">Reactivate</button>`}
+                                        <button class="danger" style="width:auto; padding:4px 8px; font-size:12px" onclick="deleteSubtenant('${s.id}')">Delete</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    ` : '<p style="color:var(--text-secondary); margin:8px 0 0">No subtenants yet.</p>'}
+                </div>
+            `).join('') : '<p style="color:var(--text-secondary)">No tenants created yet.</p>'}
+        </div>
+    `;
+};
+
 const renderDashboard = async () => {
     // Fetch data
-    const [configRes, keysRes, statusRes] = await Promise.all([
+    const [configRes, keysRes, statusRes, licenseRes, tenantsRes, subtenantsRes] = await Promise.all([
         fetchAPI('/config'),
         fetchAPI('/keys'),
-        fetchAPI('/system/status', 'GET', null, '/api/v1/platform') // Maps to /system/status
+        fetchAPI('/system/status', 'GET', null, '/api/v1/platform'), // Maps to /system/status
+        fetchAPI('/license/status'),
+        fetchAPI('/tenants'),
+        fetchAPI('/subtenants')
     ]);
 
     if (!configRes || !keysRes || !statusRes || !configRes.ok || !keysRes.ok || !statusRes.ok) return;
@@ -283,6 +432,9 @@ const renderDashboard = async () => {
     state.config = await configRes.json();
     state.keys = await keysRes.json() || [];
     state.systemStatus = await statusRes.json();
+    state.license = (licenseRes && licenseRes.ok) ? await licenseRes.json() : null;
+    state.tenants = (tenantsRes && tenantsRes.ok) ? (await tenantsRes.json() || []) : [];
+    state.subtenants = (subtenantsRes && subtenantsRes.ok) ? (await subtenantsRes.json() || []) : [];
     const systemStatus = state.systemStatus;
 
     app.innerHTML = `
@@ -818,6 +970,12 @@ const renderDashboard = async () => {
                 </div>
             </div>
 
+            <!-- License -->
+            ${renderLicenseSection()}
+
+            <!-- Tenants & Subtenants -->
+            ${renderTenantsSection()}
+
             <!-- API Keys -->
             <div class="section">
                 <div class="section-header">
@@ -836,6 +994,7 @@ const renderDashboard = async () => {
                             <th>Name</th>
                             <th>Prefix</th>
                             <th>Role</th>
+                            <th>Scope</th>
                             <th>Created</th>
                             <th>Status</th>
                             <th>Action</th>
@@ -847,13 +1006,14 @@ const renderDashboard = async () => {
                                 <td style="text-transform:capitalize">${k.name}</td>
                                 <td><code>${k.prefix || 'sk-...'}...</code></td>
                                 <td>${k.role}</td>
+                                <td>${k.org_id ? `<code>${k.org_id}</code>` : (k.tenant_name ? `${k.tenant_name} (all subtenants)` : '<span style="color:var(--text-secondary)">platform</span>')}</td>
                                 <td>${new Date(k.created_at).toLocaleDateString()}</td>
                                 <td><span class="status-badge ${k.revoked_at ? 'status-offline' : 'status-online'}">${k.revoked_at ? 'Revoked' : 'Active'}</span></td>
                                 <td>
                                     ${!k.revoked_at ? `<button class="danger" style="width:auto; padding:4px 8px; font-size:12px" onclick="revokeKey('${k.id}')">Revoke</button>` : ''}
                                 </td>
                             </tr>
-                        `).join('') : '<tr><td colspan="6" style="text-align:center">No API Keys created</td></tr>'}
+                        `).join('') : '<tr><td colspan="7" style="text-align:center">No API Keys created</td></tr>'}
                     </tbody>
                 </table>
             </div>
@@ -1121,6 +1281,16 @@ window.showCreateKeyModal = () => {
                             <option value="reader">Reader (Query Data)</option>
                         </select>
                     </div>
+                    <div class="form-group">
+                        <label>Subtenant scope (optional — binds this key's telemetry to X-Scope-OrgID)</label>
+                        <select name="subtenant_id" style="width:100%; padding:8px; background:rgba(0,0,0,0.2); color:white; border:1px solid var(--border-color); border-radius:6px">
+                            <option value="">Platform key (no tenant scope)</option>
+                            ${state.subtenants.map(s => {
+                                const tenant = state.tenants.find(t => t.id === s.tenant_id);
+                                return `<option value="${s.id}" data-tenant-id="${s.tenant_id}">${tenant ? tenant.name + ' / ' : ''}${s.name} (${s.org_id})</option>`;
+                            }).join('')}
+                        </select>
+                    </div>
                     <button type="submit" class="btn-generate" style="display:flex; justify-content:center; align-items:center; gap:8px">
                         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                         Generate
@@ -1149,6 +1319,214 @@ window.showCreateKeyModal = () => {
 window.closeAndRefresh = () => {
     closeModal();
     renderDashboard();
+};
+
+// --- License ---
+
+window.showInstallLicenseModal = () => {
+    let container = document.getElementById('modalContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'modalContainer';
+        document.body.appendChild(container);
+    }
+
+    container.innerHTML = `
+        <div class="modal-overlay" onclick="closeModal(event)">
+            <div class="card" onclick="event.stopPropagation()">
+                <h2>Install License</h2>
+                <p style="color:var(--text-secondary)">Upload the <code>license.lic</code> file you downloaded from the IyziTrace portal, or paste its contents directly.</p>
+                <form id="installLicenseForm">
+                    <div class="form-group">
+                        <label>License File</label>
+                        <label for="uploadLicenseFile" style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:24px 16px; border:2px dashed var(--card-border); border-radius:12px; background:var(--input-bg); cursor:pointer; text-align:center;">
+                            <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                            <span style="font-size:14px; font-weight:500; color:var(--text-primary);" id="uploadLicenseFileLabel">Click to browse for license.lic</span>
+                        </label>
+                        <input type="file" id="uploadLicenseFile" accept=".lic,.txt,.jwt" style="display:none;">
+                    </div>
+                    <div class="form-group">
+                        <label>Or paste the token directly</label>
+                        <textarea name="token" id="licenseTokenInput" rows="6" style="width:100%; padding:8px; background:rgba(0,0,0,0.2); color:white; border:1px solid var(--border-color); border-radius:6px; font-family:monospace; font-size:11px" placeholder="eyJhbGciOiJFZERTQSIs..."></textarea>
+                    </div>
+                    <button type="submit" class="btn-generate" style="display:flex; justify-content:center; align-items:center; gap:8px">Install</button>
+                </form>
+            </div>
+        </div>
+    `;
+    document.body.style.overflow = 'hidden';
+
+    const tokenInput = document.getElementById('licenseTokenInput');
+    const uploadLicenseFile = document.getElementById('uploadLicenseFile');
+    const uploadLicenseFileLabel = document.getElementById('uploadLicenseFileLabel');
+
+    uploadLicenseFile.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) {
+            uploadLicenseFileLabel.innerText = 'Click to browse for license.lic';
+            return;
+        }
+        uploadLicenseFileLabel.innerText = file.name;
+        const reader = new FileReader();
+        reader.onload = (ev) => { tokenInput.value = ev.target.result.trim(); };
+        reader.readAsText(file);
+    };
+
+    document.getElementById('installLicenseForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const token = tokenInput.value.trim();
+        if (!token) {
+            showModal('Validation Error', 'Upload a license.lic file or paste the token before installing.', 'error');
+            return;
+        }
+        const res = await fetchAPI('/license/install', 'POST', { token });
+        if (res && res.ok) {
+            closeModal();
+            renderDashboard();
+        } else {
+            let errorMsg = 'Failed to install license';
+            try {
+                const body = await res.json();
+                if (body && body.error) errorMsg = body.error;
+            } catch (e) { }
+            showModal('License Error', errorMsg, 'error');
+        }
+    };
+};
+
+// --- Tenants & Subtenants ---
+
+window.showCreateTenantModal = () => {
+    let container = document.getElementById('modalContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'modalContainer';
+        document.body.appendChild(container);
+    }
+
+    container.innerHTML = `
+        <div class="modal-overlay" onclick="closeModal(event)">
+            <div class="card" onclick="event.stopPropagation()">
+                <h2>New Tenant</h2>
+                <form id="createTenantForm">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" name="name" required placeholder="CCI Holding Turkey">
+                    </div>
+                    <div class="form-group">
+                        <label>Slug (lowercase, dashes)</label>
+                        <input type="text" name="slug" required pattern="[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?" placeholder="cci-tr">
+                    </div>
+                    <button type="submit" class="btn-generate" style="display:flex; justify-content:center; align-items:center; gap:8px">Create</button>
+                </form>
+            </div>
+        </div>
+    `;
+    document.body.style.overflow = 'hidden';
+
+    document.getElementById('createTenantForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const res = await fetchAPI('/tenants', 'POST', Object.fromEntries(fd));
+        if (res && res.ok) {
+            closeModal();
+            renderDashboard();
+        } else {
+            let errorMsg = 'Failed to create tenant';
+            try {
+                const body = await res.json();
+                if (body && body.error) errorMsg = body.error;
+            } catch (e) { }
+            showModal('Error', errorMsg, 'error');
+        }
+    };
+};
+
+window.showCreateSubtenantModal = (tenantId) => {
+    let container = document.getElementById('modalContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'modalContainer';
+        document.body.appendChild(container);
+    }
+
+    const tenant = state.tenants.find(t => t.id === tenantId);
+
+    container.innerHTML = `
+        <div class="modal-overlay" onclick="closeModal(event)">
+            <div class="card" onclick="event.stopPropagation()">
+                <h2>New Subtenant${tenant ? ` in ${tenant.name}` : ''}</h2>
+                <form id="createSubtenantForm">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" name="name" required placeholder="Production">
+                    </div>
+                    <div class="form-group">
+                        <label>Slug (lowercase, dashes)</label>
+                        <input type="text" name="slug" required pattern="[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?" placeholder="prod">
+                    </div>
+                    <p style="color:var(--text-secondary); font-size:12px">Resulting X-Scope-OrgID: <code>${tenant ? tenant.slug : '...'}.&lt;slug&gt;</code></p>
+                    <button type="submit" class="btn-generate" style="display:flex; justify-content:center; align-items:center; gap:8px">Create</button>
+                </form>
+            </div>
+        </div>
+    `;
+    document.body.style.overflow = 'hidden';
+
+    document.getElementById('createSubtenantForm').onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const res = await fetchAPI(`/tenants/${tenantId}/subtenants`, 'POST', Object.fromEntries(fd));
+        if (res && res.ok) {
+            closeModal();
+            renderDashboard();
+        } else {
+            let errorMsg = 'Failed to create subtenant';
+            try {
+                const body = await res.json();
+                if (body && body.error) errorMsg = body.error;
+            } catch (e) { }
+            showModal('Error', errorMsg, 'error');
+        }
+    };
+};
+
+window.suspendTenant = (id) => {
+    showConfirmModal('Suspend Tenant', 'API keys scoped to this tenant will stop authenticating. Continue?', async () => {
+        await fetchAPI(`/tenants/${id}/suspend`, 'POST');
+        renderDashboard();
+    });
+};
+
+window.reactivateTenant = async (id) => {
+    await fetchAPI(`/tenants/${id}/reactivate`, 'POST');
+    renderDashboard();
+};
+
+window.deleteTenant = (id) => {
+    showConfirmModal('Delete Tenant', 'This also removes all of its subtenants. This action cannot be undone. Continue?', async () => {
+        await fetchAPI(`/tenants/${id}`, 'DELETE');
+        renderDashboard();
+    });
+};
+
+window.suspendSubtenant = (id) => {
+    showConfirmModal('Suspend Subtenant', 'API keys scoped to this subtenant will stop authenticating. Continue?', async () => {
+        await fetchAPI(`/subtenants/${id}/suspend`, 'POST');
+        renderDashboard();
+    });
+};
+
+window.reactivateSubtenant = async (id) => {
+    await fetchAPI(`/subtenants/${id}/reactivate`, 'POST');
+    renderDashboard();
+};
+
+window.deleteSubtenant = (id) => {
+    showConfirmModal('Delete Subtenant', 'This action cannot be undone. Continue?', async () => {
+        await fetchAPI(`/subtenants/${id}`, 'DELETE');
+        renderDashboard();
+    });
 };
 
 
