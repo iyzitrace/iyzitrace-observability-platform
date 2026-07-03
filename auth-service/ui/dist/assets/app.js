@@ -1411,11 +1411,11 @@ window.showCreateTenantModal = () => {
                 <form id="createTenantForm">
                     <div class="form-group">
                         <label>Name</label>
-                        <input type="text" name="name" required placeholder="CCI Holding Turkey">
+                        <input type="text" name="name" required placeholder="Acme Holding Turkey">
                     </div>
                     <div class="form-group">
                         <label>Slug (lowercase, dashes)</label>
-                        <input type="text" name="slug" required pattern="[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?" placeholder="cci-tr">
+                        <input type="text" name="slug" required pattern="[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?" placeholder="acme-tr">
                     </div>
                     <button type="submit" class="btn-generate" style="display:flex; justify-content:center; align-items:center; gap:8px">Create</button>
                 </form>

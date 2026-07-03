@@ -49,8 +49,8 @@ One platform install = one **Account** = one active license.
 ## 3. Federation hierarchy & OrgID scheme
 
 ```
-Account            acc_CCI_Holding              (= license "sub"; the whole customer)
-  └─ Tenant        cci-tr, cci-kz, …            (≤ limits.tenants.max)         RBAC/grouping unit
+Account            acc_example_account              (= license "sub"; the whole customer)
+  └─ Tenant        acme-tr, acme-kz, …            (≤ limits.tenants.max)         RBAC/grouping unit
        └─ Subtenant   prod, staging, …          (≤ limits.subtenants.max_total across ALL tenants)   telemetry scope
 ```
 
@@ -58,9 +58,9 @@ Account            acc_CCI_Holding              (= license "sub"; the whole cust
 Each subtenant gets a unique `X-Scope-OrgID`; the tenant is an organizational /
 RBAC / quota grouping. This matches the license counting subtenants as the real
 billable unit (`max_total = 12`), and the fact that an actual telemetry-emitting
-app maps to a subtenant (e.g. `cci-tr/prod`).
+app maps to a subtenant (e.g. `acme-tr/prod`).
 
-**OrgID format:** `org_id = "<tenant_slug>.<subtenant_slug>"`, e.g. `cci-tr.prod`.
+**OrgID format:** `org_id = "<tenant_slug>.<subtenant_slug>"`, e.g. `acme-tr.prod`.
 
 - Slugs are validated `^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$` (lowercase, DNS-ish).
 - `.` separator is safe for Loki/Tempo tenant IDs; slugs may not contain `.`.
@@ -84,20 +84,24 @@ manually with Node's built-in `crypto.verify()` in
 { "alg": "EdDSA", "typ": "JWT", "kid": "iyzi-lic-2026-01" }
 ```
 
-**Payload** (aligned with the license design, slide 5)
+**Payload** (aligned with the license design, slide 5 — `features` updated
+below to the actual capability names wired in §16.1; the slide's original
+example used placeholder names `crm`/`sap`/`online`)
 ```json
 {
-  "sub": "acc_CCI_Holding",
-  "customer": "CCI Holding A.Ş.",
+  "sub": "acc_example_account",
+  "customer": "Acme Holding A.Ş.",
   "edition": "enterprise",
   "iat": 1718800000,
   "exp": 1726576000,
   "grace_days": 14,
   "limits": {
     "tenants":    { "max": 3 },
-    "subtenants": { "max_total": 12 }
+    "subtenants": { "max_total": 12 },
+    "traces":     { "retention_days": 7, "ingestion_rate_limit_bytes": 25000000 },
+    "logs":       { "retention_days": 14, "ingestion_rate_mb": 10 }
   },
-  "features": ["crm", "sap", "online"],
+  "features": ["inventory", "agent_management", "external_query", "alerting"],
   "binding": "fp_3b1c…"        // optional node-lock fingerprint (Phase 2)
 }
 ```
@@ -131,7 +135,7 @@ CREATE TABLE IF NOT EXISTS license (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   token           TEXT NOT NULL,           -- raw signed JWT
   kid             TEXT,
-  account_sub     TEXT NOT NULL,           -- "acc_CCI_Holding"
+  account_sub     TEXT NOT NULL,           -- "acc_example_account"
   customer        TEXT,
   edition         TEXT,
   exp             INTEGER NOT NULL,        -- unix seconds
@@ -228,7 +232,7 @@ past `exp + grace_days`, status becomes `expired` and creation is blocked
 ### 7.2 auth-service returns the scope as response headers
 `/auth/validate` (the nginx `auth_request` target) responds `200` and sets:
 ```
-X-Scope-OrgID: cci-tr.prod
+X-Scope-OrgID: acme-tr.prod
 X-Tenant-Id:   <tenant uuid>
 X-Subtenant-Id:<subtenant uuid>
 ```
@@ -428,11 +432,12 @@ binary/tool, not just read for plausibility:
 
 - `auth-service`: `tsc --noEmit` clean, `npm run build` produces a `dist/`
   with **no** test files (tsconfig excludes `__tests__`/`*.test.ts`/`test-utils`),
-  and `npx vitest run` → **52/52 passing**, including regression tests for
+  and `npx vitest run` → **54/54 passing**, including regression tests for
   the pre-existing revoked-API-key bug, the pre-existing
-  stored-but-never-enforced tenant/subtenant suspension bug, and the §16.0
+  stored-but-never-enforced tenant/subtenant suspension bug, the §16.0
   ingestion-gating behavior (blocks with no license, allows during
-  active/grace, blocks again once expired, independent of `features`).
+  active/grace, blocks again once expired, independent of `features`), and
+  the §17 public-keys.json Docker mount bug found during live testing.
 - `tempo -config.verify=true` (2.10.1) and `loki -verify-config` (3.6.6) both
   passed against the actual repo templates (`config/tempo/config.yaml.template`,
   `config/loki/config.yaml.template`) with `per_tenant_override_config` /
@@ -625,3 +630,56 @@ Phase 1 already shipped in the Console) never actually blocked its API keys
 in the same change: `checkApiKey()` now requires `status = 'active'` on
 both the subtenant and its parent tenant before authenticating a scoped key.
 Covered by three new regression tests in `auth.test.ts`.
+
+---
+
+## 17. Bug found during live testing: `public-keys.json` was never mounted into the container
+
+**Symptom:** installing a real license via the Console failed with
+`Unknown license signing key: <kid>` even for a `kid` visibly present in
+`config/license/public-keys.json` on the host.
+
+**Root cause:** `licenseTokenVerifier.ts`'s default path,
+`path.join(__dirname, '../../../config/license/public-keys.json')`, resolves
+correctly when running the compiled `dist/` (or `ts-node-dev`) directly from
+a full repo checkout — three levels up from `dist/services/` lands on the
+repo root. But `docker-compose.yml`'s `auth-service` block never mounted
+`config/license/` into the container, and the container's `/app` only ever
+contains `dist/`, `ui/`, `data/`, and `tenancy/` — there is no `/config` at
+all. Three levels up from `/app/dist/services` inside the container lands
+outside `/app` entirely, at a path that doesn't exist, so
+`loadPublicKeys()`'s `try/catch` silently fell back to `{}` on every single
+container boot. Every license install was doomed to fail with this exact
+error, unconditionally, in every Docker deployment — the failure mode this
+whole license-verification path exists to prevent (a signing key that's
+genuinely wrong) was indistinguishable from this deployment gap.
+
+**Why none of the automated checks caught it:** every `licenseTokenVerifier`
+and `licenseService` test uses `setPublicKeysForTest()` to inject an
+in-memory key map, which bypasses `loadPublicKeys()`'s file read entirely.
+`docker compose config --quiet` only validates YAML/interpolation syntax,
+not whether a bind-mount source is *useful* — a missing mount is valid
+compose syntax. This is exactly the gap between "config parses" and
+"the feature actually works when you run it," and it only surfaced because
+the operator ran the real end-to-end flow.
+
+**Fix:**
+1. `docker-compose.yml`: added
+   `- ./config/license/public-keys.json:/app/config/license/public-keys.json:ro`
+   to `auth-service`'s volumes, and pinned
+   `LICENSE_PUBLIC_KEYS_PATH=/app/config/license/public-keys.json` in its
+   `environment` so the code never depends on the fragile relative-path
+   guess inside a container.
+2. New regression tests in `licenseTokenVerifier.test.ts` that read keys
+   from an actual file via `LICENSE_PUBLIC_KEYS_PATH` (not
+   `setPublicKeysForTest()`) — one proving the happy path works from disk,
+   one proving a missing file fails closed (`Unknown license signing key`,
+   not silently open). These are the tests that would have caught this
+   class of bug had they existed from the start.
+
+**Operator action required:** after pulling this fix, `auth-service` must
+be recreated to pick up the new volume mount and env var — a plain
+`docker compose restart auth-service` reuses the old container
+configuration and does **not** apply new mounts. Use
+`docker compose up -d auth-service` (recreates the container) or
+`make restart` (full `down && up`).

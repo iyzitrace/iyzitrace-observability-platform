@@ -7,7 +7,19 @@
   "grace_days": 14,
   "limits": {
     "tenants": { "max": 3 },
-    "subtenants": { "max_total": 12 }
+    "subtenants": { "max_total": 12 },
+    "traces": {
+      "retention_days": 7,
+      "ingestion_rate_limit_bytes": 25000000,
+      "ingestion_burst_size_bytes": 50000000,
+      "max_traces_per_user": 20000
+    },
+    "logs": {
+      "retention_days": 14,
+      "ingestion_rate_mb": 10,
+      "ingestion_burst_size_mb": 20,
+      "max_streams_per_user": 5000
+    }
   },
-  "features": ["crm", "sap", "online"]
+  "features": ["inventory", "agent_management", "external_query", "alerting"]
 }

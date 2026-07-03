@@ -42,3 +42,31 @@ curl -X POST http://localhost/api/v1/platform/auth/license/install \
 Rotating keys: run `keygen.mjs` again with a new `kid` — old entries in
 `config/license/public-keys.json` are preserved, so previously issued dev
 tokens keep verifying.
+
+## Available `features` keys
+
+`sample-payload.json` lists all four currently-wired optional modules (see
+docs/architecture/multitenancy-licensing.md §16.1) — remove any you want to
+test as *locked*:
+
+| Key | Gates |
+|---|---|
+| `inventory` | Inventory Service REST API (`/inventory/*`) |
+| `agent_management` | Lawrence's mutating OpAMP calls (config push, restart, group CRUD) — read-only GETs stay open regardless |
+| `external_query` | `/query/v1/{metrics,logs,traces}/` |
+| `alerting` | `/query/v1/alerts/` (Alertmanager) |
+
+Telemetry ingestion (traces/logs/metrics) is **not** a feature — it's gated
+purely by license status (§16.0) and works as soon as any active/grace
+license is installed, regardless of `features`.
+
+`limits.traces`/`limits.logs` drive Tempo/Loki per-subtenant retention and
+rate-limit overrides (§16.2) — inert until Loki `auth_enabled`/Tempo
+`multitenancy_enabled` are turned on (§14).
+
+Note: `docker-compose.yml` bind-mounts `config/license/public-keys.json`
+directly into the running `auth-service` container, so re-running
+`keygen.mjs` (adding a new `kid`) or editing `sample-payload.json` and
+re-signing takes effect immediately — no container restart needed. A
+restart is only required the first time the mount itself is added (already
+done).

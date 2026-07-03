@@ -62,7 +62,7 @@ describe('tenancyOverridesService', () => {
       )
     );
 
-    const tenant = await tenantService.createTenant('CCI Holding Turkey', 'cci-tr');
+    const tenant = await tenantService.createTenant('Acme Holding Turkey', 'acme-tr');
     await tenantService.createSubtenant(tenant.id, 'Production', 'prod');
 
     await tenancyOverridesService.regenerateOverrides();
@@ -70,11 +70,11 @@ describe('tenancyOverridesService', () => {
     const tempoContent = fs.readFileSync(path.join(tenancyDir, 'tempo-overrides.yaml'), 'utf-8');
     const lokiContent = fs.readFileSync(path.join(tenancyDir, 'loki-runtime-config.yaml'), 'utf-8');
 
-    expect(tempoContent).toContain('"cci-tr.prod"');
+    expect(tempoContent).toContain('"acme-tr.prod"');
     expect(tempoContent).toContain('rate_limit_bytes: 25000000');
     expect(tempoContent).toContain('block_retention: 168h'); // 7 days * 24h
 
-    expect(lokiContent).toContain('"cci-tr.prod"');
+    expect(lokiContent).toContain('"acme-tr.prod"');
     expect(lokiContent).toContain('ingestion_rate_mb: 10');
     expect(lokiContent).toContain('retention_period: 336h'); // 14 days * 24h
   });

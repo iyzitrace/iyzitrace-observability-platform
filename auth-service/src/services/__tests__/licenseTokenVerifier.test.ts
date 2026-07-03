@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import {
   verifyLicenseToken,
   setPublicKeysForTest,
@@ -73,5 +76,48 @@ describe('licenseTokenVerifier', () => {
     } as any);
 
     expect(() => verifyLicenseToken(token)).toThrow(/missing required claims/);
+  });
+
+  describe('reading public-keys.json from disk (LICENSE_PUBLIC_KEYS_PATH)', () => {
+    // Regression coverage for a real deployment bug: every other test in this
+    // file uses setPublicKeysForTest() and never touches the filesystem, so
+    // they never would have caught that the auth-service Docker container
+    // had no volume mount for config/license/public-keys.json — every
+    // install failed with "Unknown license signing key" because
+    // loadPublicKeys() silently fell back to `{}` on ENOENT. This test
+    // exercises the actual disk-read path via LICENSE_PUBLIC_KEYS_PATH,
+    // the same env var docker-compose.yml now pins for the container.
+    beforeEach(() => {
+      vi.resetModules();
+    });
+
+    it('verifies a token using keys read from a real file on disk, not an injected map', async () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'iyzi-pubkeys-test-'));
+      const keysPath = path.join(tmpDir, 'public-keys.json');
+
+      const signer = createTestLicenseSigner('disk-kid');
+      fs.writeFileSync(keysPath, JSON.stringify(signer.publicKeyMap));
+
+      process.env.LICENSE_PUBLIC_KEYS_PATH = keysPath;
+      const fresh = await import('../licenseTokenVerifier');
+
+      const token = signer.sign(defaultTestPayload());
+      const claims = fresh.verifyLicenseToken(token);
+      expect(claims.sub).toBe('acc_test');
+
+      delete process.env.LICENSE_PUBLIC_KEYS_PATH;
+    });
+
+    it('fails closed (not open) when LICENSE_PUBLIC_KEYS_PATH points at a missing file', async () => {
+      process.env.LICENSE_PUBLIC_KEYS_PATH = '/definitely/does/not/exist/public-keys.json';
+      const fresh = await import('../licenseTokenVerifier');
+
+      const signer = createTestLicenseSigner('any-kid');
+      const token = signer.sign(defaultTestPayload());
+
+      expect(() => fresh.verifyLicenseToken(token)).toThrow(/Unknown license signing key/);
+
+      delete process.env.LICENSE_PUBLIC_KEYS_PATH;
+    });
   });
 });

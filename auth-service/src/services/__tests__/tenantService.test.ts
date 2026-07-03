@@ -36,11 +36,11 @@ describe('tenantService', () => {
   it('creates a tenant and derives the correct org_id for its subtenants', async () => {
     const { tenantService } = await freshTenantService();
 
-    const tenant = await tenantService.createTenant('CCI Holding Turkey', 'cci-tr');
-    expect(tenant.slug).toBe('cci-tr');
+    const tenant = await tenantService.createTenant('Acme Holding Turkey', 'acme-tr');
+    expect(tenant.slug).toBe('acme-tr');
 
     const subtenant = await tenantService.createSubtenant(tenant.id, 'Production', 'prod');
-    expect(subtenant.org_id).toBe('cci-tr.prod');
+    expect(subtenant.org_id).toBe('acme-tr.prod');
   });
 
   it('rejects a duplicate tenant slug', async () => {
