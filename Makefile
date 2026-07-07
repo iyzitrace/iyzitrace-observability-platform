@@ -2,22 +2,25 @@
 
 .PHONY: all up up-build down restart logs dirs check-dirs gen-creds test validate
 
+DATA_DIR ?= ./data
+export DATA_DIR
+
 # Default target
 all: up
 
 # Create necessary data directories for local bind mounts
 dirs:
-	@echo "Creating data directories..."
-	@mkdir -p data/auth
-	@mkdir -p data/lawrence
-	@mkdir -p data/loki
-	@mkdir -p data/prometheus
-	@mkdir -p data/seaweedfs
-	@mkdir -p data/tempo
-	@mkdir -p data/thanos-store
-	@mkdir -p data/thanos-compactor
-	@mkdir -p data/inventory
-	@mkdir -p data/alertmanager
+	@echo "Creating data directories under $(DATA_DIR)..."
+	@mkdir -p "$(DATA_DIR)/auth"
+	@mkdir -p "$(DATA_DIR)/lawrence"
+	@mkdir -p "$(DATA_DIR)/loki"
+	@mkdir -p "$(DATA_DIR)/prometheus"
+	@mkdir -p "$(DATA_DIR)/seaweedfs"
+	@mkdir -p "$(DATA_DIR)/tempo"
+	@mkdir -p "$(DATA_DIR)/thanos-store"
+	@mkdir -p "$(DATA_DIR)/thanos-compactor"
+	@mkdir -p "$(DATA_DIR)/inventory"
+	@mkdir -p "$(DATA_DIR)/alertmanager"
 	@echo "Data directories created."
 
 # Generate credentials and config files
@@ -65,7 +68,7 @@ logs:
 
 # Check which directories exist (helper)
 check-dirs:
-	@ls -F data/ || echo "Data directory does not exist."
+	@ls -F "$(DATA_DIR)/" || echo "Data directory does not exist: $(DATA_DIR)"
 
 test:
 	$(MAKE) -C cli test
