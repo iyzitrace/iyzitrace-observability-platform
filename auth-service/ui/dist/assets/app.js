@@ -1005,8 +1005,11 @@ const renderDashboard = async () => {
                             <tr>
                                 <td style="text-transform:capitalize">${k.name}</td>
                                 <td><code>${k.prefix || 'sk-...'}...</code></td>
-                                <td>${k.role}</td>
-                                <td>${k.org_id ? `<code>${k.org_id}</code>` : (k.tenant_name ? `${k.tenant_name} (all subtenants)` : '<span style="color:var(--text-secondary)">platform</span>')}</td>
+                                <td>${(k.role || '').split(',').filter(Boolean).map(r => r.trim()).join(' + ')}</td>
+                                <td>${
+                                    k.org_ids ? k.org_ids.split(',').map(o => `<code>${o}</code>`).join(' ')
+                                    : (k.tenant_only_name ? `${k.tenant_only_name} (all subtenants)` : '<span style="color:var(--text-secondary)">platform</span>')
+                                }</td>
                                 <td>${new Date(k.created_at).toLocaleDateString()}</td>
                                 <td><span class="status-badge ${k.revoked_at ? 'status-offline' : 'status-online'}">${k.revoked_at ? 'Revoked' : 'Active'}</span></td>
                                 <td>
@@ -1275,21 +1278,41 @@ window.showCreateKeyModal = () => {
                         <input type="text" name="name" required placeholder="Production Server 1">
                     </div>
                     <div class="form-group">
-                        <label>Role</label>
-                        <select name="role" style="width:100%; padding:8px; background:rgba(0,0,0,0.2); color:white; border:1px solid var(--border-color); border-radius:6px">
-                            <option value="agent">Agent (Write Data)</option>
-                            <option value="reader">Reader (Query Data)</option>
-                        </select>
+                        <label>Role (select one or both)</label>
+                        <div class="checkbox-list">
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="role" value="agent" checked>
+                                Agent (Write Data)
+                            </label>
+                            <label class="checkbox-row">
+                                <input type="checkbox" name="role" value="reader">
+                                Reader (Query Data)
+                            </label>
+                        </div>
                     </div>
                     <div class="form-group">
-                        <label>Subtenant scope (optional — binds this key's telemetry to X-Scope-OrgID)</label>
-                        <select name="subtenant_id" style="width:100%; padding:8px; background:rgba(0,0,0,0.2); color:white; border:1px solid var(--border-color); border-radius:6px">
-                            <option value="">Platform key (no tenant scope)</option>
-                            ${state.subtenants.map(s => {
-                                const tenant = state.tenants.find(t => t.id === s.tenant_id);
-                                return `<option value="${s.id}" data-tenant-id="${s.tenant_id}">${tenant ? tenant.name + ' / ' : ''}${s.name} (${s.org_id})</option>`;
-                            }).join('')}
-                        </select>
+                        <label>Subtenant scope (which orgs this key's telemetry/queries are bound to)</label>
+                        <div class="checkbox-list" id="keyScopeList">
+                            <label class="checkbox-row">
+                                <input type="checkbox" id="keyScopePlatform" name="platform_scope" value="platform" checked>
+                                Platform key (no tenant scope)
+                            </label>
+                            ${Object.entries(
+                                state.subtenants.reduce((acc, s) => {
+                                    const tenant = state.tenants.find(t => t.id === s.tenant_id);
+                                    const label = tenant ? tenant.name : 'Unknown tenant';
+                                    return { ...acc, [label]: [...(acc[label] || []), s] };
+                                }, {})
+                            ).map(([tenantName, subs]) => `
+                                <div class="checkbox-list-group-label">${tenantName}</div>
+                                ${subs.map(s => `
+                                    <label class="checkbox-row">
+                                        <input type="checkbox" class="keyScopeSubtenant" name="subtenant_ids" value="${s.id}">
+                                        ${s.name} <span class="checkbox-row-meta">(${s.org_id})</span>
+                                    </label>
+                                `).join('')}
+                            `).join('') || '<div class="checkbox-list-group-label">No subtenants yet — create one under Tenants above</div>'}
+                        </div>
                     </div>
                     <button type="submit" class="btn-generate" style="display:flex; justify-content:center; align-items:center; gap:8px">
                         <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
@@ -1302,11 +1325,48 @@ window.showCreateKeyModal = () => {
     `;
     document.body.style.overflow = 'hidden';
 
+    // Platform scope and subtenant scope are mutually exclusive — a key is
+    // either unscoped (platform) or bound to one-or-more specific
+    // subtenants, never both. Checking one side clears the other.
+    const platformCheckbox = document.getElementById('keyScopePlatform');
+    const subtenantCheckboxes = Array.from(document.querySelectorAll('.keyScopeSubtenant'));
+
+    platformCheckbox.onchange = () => {
+        if (platformCheckbox.checked) {
+            subtenantCheckboxes.forEach(cb => { cb.checked = false; });
+        }
+    };
+    subtenantCheckboxes.forEach(cb => {
+        cb.onchange = () => {
+            if (cb.checked) platformCheckbox.checked = false;
+        };
+    });
+
     document.getElementById('createKeyForm').onsubmit = async (e) => {
         e.preventDefault();
         const fd = new FormData(e.target);
 
-        const res = await fetchAPI('/keys', 'POST', Object.fromEntries(fd));
+        // Role is a checkbox group (a key may write and/or read) — FormData
+        // yields one entry per checked box under the same name, so collect
+        // them explicitly rather than Object.fromEntries (which keeps only
+        // the last value per key).
+        const roles = fd.getAll('role');
+        if (roles.length === 0) {
+            showModal('Error', 'Select at least one role (Agent and/or Reader).', 'error');
+            return;
+        }
+
+        const subtenantIds = fd.getAll('subtenant_ids');
+        if (!platformCheckbox.checked && subtenantIds.length === 0) {
+            showModal('Error', 'Select "Platform key" or at least one subtenant to scope this key to.', 'error');
+            return;
+        }
+
+        const res = await fetchAPI('/keys', 'POST', {
+            name: fd.get('name'),
+            role: roles.join(','),
+            subtenant_ids: platformCheckbox.checked ? [] : subtenantIds
+        });
         if (res.ok) {
             const data = await res.json();
             showKeyResult(data);
@@ -1600,6 +1660,12 @@ const showKeyResult = (data) => {
                         <span class="btn-text">Copy</span>
                     </button>
                 </div>
+                ${data.api_key && data.api_key.org_ids && data.api_key.org_ids.length > 1 ? `
+                <div style="background:rgba(88,166,255,0.1); border:1px solid var(--accent-color); border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:13px; color:var(--text-primary)">
+                    This key is scoped to multiple subtenants. Every request must also include an
+                    <code>X-Subtenant-Id</code> header set to which one it's for:
+                    ${data.api_key.org_ids.map(o => `<code>${o}</code>`).join(', ')}.
+                </div>` : ''}
                 <button onclick="closeAndRefresh()" class="btn-confirm" style="display:flex; justify-content:center; align-items:center; gap:8px">
                     <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                     I have copied the key

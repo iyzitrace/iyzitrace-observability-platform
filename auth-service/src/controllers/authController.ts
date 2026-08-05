@@ -115,12 +115,19 @@ export const updateConfig = async (req: Request, res: Response) => {
 
 export const getKeys = async (req: Request, res: Response) => {
     const db = getDB();
+    // A key's subtenant scope now lives in api_key_subtenants (GitHub
+    // PAT-style: one key, many subtenants — see migration 4). GROUP_CONCAT
+    // aggregates each key's scoped orgs into one row; the legacy tenant_id
+    // column (tenant-wide keys with no specific subtenant) is resolved
+    // separately since it has no join_table rows.
     const keys = await db.all(`
-        SELECT k.id, k.name, k.prefix, k.role, k.created_at, k.revoked_at,
-               k.tenant_id, k.subtenant_id, s.org_id, s.name as subtenant_name, t.name as tenant_name
+        SELECT k.id, k.name, k.prefix, k.role, k.created_at, k.revoked_at, k.tenant_id,
+               GROUP_CONCAT(s.org_id) AS org_ids, GROUP_CONCAT(s.name) AS subtenant_names,
+               (SELECT name FROM tenants WHERE id = k.tenant_id) AS tenant_only_name
         FROM api_keys k
-        LEFT JOIN subtenants s ON s.id = k.subtenant_id
-        LEFT JOIN tenants t ON t.id = k.tenant_id
+        LEFT JOIN api_key_subtenants aks ON aks.api_key_id = k.id
+        LEFT JOIN subtenants s ON s.id = aks.subtenant_id
+        GROUP BY k.id
         ORDER BY k.created_at DESC
     `);
     res.json(keys);
@@ -129,30 +136,28 @@ export const getKeys = async (req: Request, res: Response) => {
 export const createKey = async (req: Request, res: Response) => {
     try {
         const { name, role } = req.body;
-        let { tenant_id, subtenant_id } = req.body;
+        const subtenantIds: string[] = Array.isArray(req.body.subtenant_ids)
+            ? req.body.subtenant_ids
+            : (req.body.subtenant_ids ? [req.body.subtenant_ids] : []);
         const db = getDB();
 
-        // A key may be scoped to a subtenant (the hard telemetry-isolation
-        // unit — see docs/architecture/multitenancy-licensing.md §3), to a
-        // bare tenant (grouping only, no org_id), or to neither (platform
-        // key). Validate the scope actually exists and is internally
-        // consistent before minting a credential for it.
-        if (subtenant_id) {
+        if (!name || !role) {
+            return res.status(400).json({ error: 'name and role are required' });
+        }
+
+        // A key may be scoped to one-or-more subtenants (the hard
+        // telemetry-isolation unit — see docs/architecture/
+        // multitenancy-licensing.md §3), or to neither (platform key).
+        // Validate every requested subtenant actually exists before minting
+        // a credential for it.
+        const subtenants: { id: string; org_id: string }[] = [];
+        for (const subtenantId of subtenantIds) {
             const sub = await db.get(
-                'SELECT * FROM subtenants WHERE id = ? AND deleted_at IS NULL',
-                subtenant_id
+                'SELECT id, org_id FROM subtenants WHERE id = ? AND deleted_at IS NULL',
+                subtenantId
             );
-            if (!sub) return res.status(400).json({ error: 'Unknown subtenant_id' });
-            if (tenant_id && sub.tenant_id !== tenant_id) {
-                return res.status(400).json({ error: 'subtenant_id does not belong to tenant_id' });
-            }
-            // Auto-derive tenant_id from the subtenant so the key's scope
-            // stays internally consistent even if the caller only sent
-            // subtenant_id (the Console UI does this).
-            tenant_id = sub.tenant_id;
-        } else if (tenant_id) {
-            const tenant = await db.get('SELECT * FROM tenants WHERE id = ? AND deleted_at IS NULL', tenant_id);
-            if (!tenant) return res.status(400).json({ error: 'Unknown tenant_id' });
+            if (!sub) return res.status(400).json({ error: `Unknown subtenant_id: ${subtenantId}` });
+            subtenants.push(sub);
         }
 
         // Generate a random key
@@ -161,9 +166,16 @@ export const createKey = async (req: Request, res: Response) => {
         const hash = await bcrypt.hash(rawKey, 10);
 
         const result = await db.run(
-            'INSERT INTO api_keys (name, prefix, key_hash, role, tenant_id, subtenant_id) VALUES (?, ?, ?, ?, ?, ?)',
-            name, prefix, hash, role, tenant_id || null, subtenant_id || null
+            'INSERT INTO api_keys (name, prefix, key_hash, role) VALUES (?, ?, ?, ?)',
+            name, prefix, hash, role
         );
+
+        for (const sub of subtenants) {
+            await db.run(
+                'INSERT INTO api_key_subtenants (api_key_id, subtenant_id) VALUES (?, ?)',
+                result.lastID, sub.id
+            );
+        }
 
         res.json({
             api_key: {
@@ -171,8 +183,8 @@ export const createKey = async (req: Request, res: Response) => {
                 name,
                 prefix,
                 role,
-                tenant_id: tenant_id || null,
-                subtenant_id: subtenant_id || null,
+                subtenant_ids: subtenants.map(s => s.id),
+                org_ids: subtenants.map(s => s.org_id),
                 created_at: new Date()
             },
             raw_key: rawKey

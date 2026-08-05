@@ -123,6 +123,28 @@ const MIGRATIONS: Migration[] = [
         await db.exec("ALTER TABLE license ADD COLUMN signal_limits TEXT NOT NULL DEFAULT '{}'");
       }
     }
+  },
+  {
+    version: 4,
+    description: 'api_keys: multi-subtenant scoping (GitHub PAT-style — one key, many subtenants)',
+    up: async (db) => {
+      await db.exec(`
+        CREATE TABLE IF NOT EXISTS api_key_subtenants (
+          api_key_id   INTEGER NOT NULL REFERENCES api_keys(id),
+          subtenant_id TEXT NOT NULL REFERENCES subtenants(id),
+          PRIMARY KEY (api_key_id, subtenant_id)
+        );
+      `);
+      await db.exec('CREATE INDEX IF NOT EXISTS idx_api_key_subtenants_subtenant ON api_key_subtenants(subtenant_id)');
+
+      // Backfill: keys created under the old single-subtenant_id column get
+      // an equivalent row here, so scope resolution can rely on this table
+      // alone regardless of when the key was minted.
+      await db.exec(`
+        INSERT OR IGNORE INTO api_key_subtenants (api_key_id, subtenant_id)
+        SELECT id, subtenant_id FROM api_keys WHERE subtenant_id IS NOT NULL
+      `);
+    }
   }
 ];
 
