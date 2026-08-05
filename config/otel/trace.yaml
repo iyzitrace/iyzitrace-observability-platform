@@ -7,8 +7,10 @@ receivers:
         max_concurrent_streams: 100
         # Exposes incoming gRPC metadata (incl. X-Scope-OrgID, forwarded by
         # nginx from auth-service's resolved tenant scope) via the request
-        # context, so the resource/tenant processor below can stamp it onto
-        # every span. See docs/architecture/multitenancy-licensing.md §7-8.
+        # context, so the headers_setter extension below can re-emit it as
+        # an outgoing header to Tempo (which isolates natively by header —
+        # no attribute needs to be stamped into the span data itself; see
+        # docs/architecture/multitenancy-licensing.md §7-8).
         include_metadata: true
       http:
         endpoint: 0.0.0.0:4318
@@ -39,6 +41,14 @@ exporters:
     endpoint: metric-otel-enrichment:14317
     tls:
       insecure: true
+    # Forwards the tenant scope on this internal hop too — span-derived
+    # metrics (spanmetrics/servicegraph, below) need it for Prometheus
+    # tenant labeling (§8/§16.2), since metric-otel-enrichment's own
+    # resource/tenant processor now stamps it from THIS header rather
+    # than from an attribute baked into the span (removed — Tempo isolates
+    # natively by header, so span data no longer carries tenant.org_id).
+    auth:
+      authenticator: headers_setter
     retry_on_failure:
       enabled: true
       initial_interval: 5s
@@ -83,16 +93,6 @@ processors:
       - key: collector.pipeline
         value: traces
         action: upsert
-
-  # Multitenancy — stamps the X-Scope-OrgID captured from client
-  # metadata (nginx-injected, see config/nginx/nginx.conf) onto every span
-  # as a resource attribute. Empty when no tenant scope was resolved
-  # (platform keys, or API-key enforcement disabled).
-  resource/tenant:
-    attributes:
-      - key: tenant.org_id
-        action: upsert
-        from_context: metadata.x-scope-orgid
 
   transform/type_classifier:
     error_mode: ignore
@@ -283,7 +283,7 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, resource/tenant, resource/add_collector, transform/type_classifier, transform/span, batch]
+      processors: [memory_limiter, resource/add_collector, transform/type_classifier, transform/span, batch]
       exporters: [otlp_grpc, otlp_grpc/inventory, spanmetrics, servicegraph]
     metrics:
       receivers: [spanmetrics, servicegraph]

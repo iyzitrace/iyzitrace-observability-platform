@@ -249,8 +249,14 @@ So the OrgID the operator’s key is bound to is injected server-side — the cl
 cannot spoof it (any client-sent `X-Scope-OrgID` is overwritten).
 
 ### 7.4 Signal path
-- **Ingest:** collectors receive `X-Scope-OrgID`; the OTLP pipeline stamps a
-  `tenant.org_id` resource attribute and forwards the header to Tempo/Loki.
+- **Ingest (traces/logs):** collectors receive `X-Scope-OrgID` and forward it
+  as an outgoing header to Tempo/Loki — they do **not** also bake it into
+  the span/log data as a resource attribute (see the corrected design in
+  §8; an earlier version of this pipeline did stamp it into the data too,
+  which was redundant once the native header mechanism is in place —
+  corrected 2026-07-11).
+- **Ingest (metrics):** the header **is** stamped as a `tenant.org_id`
+  resource attribute — necessary here, see §8.
 - **Query:** `/query/v1/*` forwards `X-Scope-OrgID`; Tempo/Loki filter by tenant
   natively. (Metrics: see §8.)
 
@@ -263,21 +269,48 @@ each backend needs to actually *enforce* isolation:
 
 | Backend | Mechanism | Status |
 |---|---|---|
-| **Loki** | `auth_enabled: true` (`config/loki/config.yaml.template`) → requires `X-Scope-OrgID` on every request; per-tenant streams/index. Collector (`log-otel-enrichment`) forwards it via the `headers_setter` extension. | Wired, defaults to `false` (opt-in — see §14) |
-| **Tempo** | `multitenancy_enabled: true` (`config/tempo/config.yaml.template`) → per-tenant blocks; TraceQL scoped. Collector (`trace-otel-enrichment`) forwards it the same way. | Wired, defaults to `false` (opt-in — see §14) |
-| **Prometheus + Thanos** | No native org isolation (this stack uses the sidecar, not Receive/Mimir). `metric-otel-enrichment` already stamps `tenant.org_id` as a resource attribute (from `X-Scope-OrgID`), which its `prometheusremotewrite` exporter's existing `resource_to_telemetry_conversion: true` turns into a `tenant_org_id` metric label automatically — no exporter change needed. Query-side enforcement is a new opt-in `metrics-tenancy-proxy` service (`quay.io/prometheuscommunity/prom-label-proxy:v0.11.1`, flags confirmed via `--help`) sitting in front of `thanos-query`, enforcing the `tenant_org_id` label from the `X-Scope-OrgID` header (`-header-name`). | Wired (compose service added, inert until nginx's `datasource_metrics` upstream is switched — see §14) |
+| **Loki** | `auth_enabled: true` (`config/loki/config.yaml.template`) → requires `X-Scope-OrgID` on every request; per-tenant streams/index. Collector (`log-otel-enrichment`) forwards the header via the `headers_setter` extension — nothing is written into the log data itself. | Wired, defaults to `false` (opt-in — see §14) |
+| **Tempo** | `multitenancy_enabled: true` (`config/tempo/config.yaml.template`) → per-tenant blocks; TraceQL scoped. Collector (`trace-otel-enrichment`) forwards the header the same way — nothing is written into the span data itself. | Wired, defaults to `false` (opt-in — see §14) |
+| **Prometheus + Thanos** | No native org isolation (this stack uses the sidecar, not Receive/Mimir) — a header alone does nothing here. `metric-otel-enrichment` stamps `tenant.org_id` as a resource attribute (from `X-Scope-OrgID`), which its `prometheusremotewrite` exporter's existing `resource_to_telemetry_conversion: true` turns into a `tenant_org_id` metric label automatically. Query-side enforcement is a new opt-in `metrics-tenancy-proxy` service (`quay.io/prometheuscommunity/prom-label-proxy:v0.11.1`, flags confirmed via `--help`) sitting in front of `thanos-query`, enforcing the `tenant_org_id` label from the `X-Scope-OrgID` header (`-header-name`). | Wired (compose service added, inert until nginx's `datasource_metrics` upstream is switched — see §14) |
 
-Collector wiring detail: `otlp` receivers set `include_metadata: true` so the
-inbound `X-Scope-OrgID` (forwarded by nginx via `auth_request_set`) is
-reachable in-context as `metadata.x-scope-orgid`; a `resource/tenant`
-processor (`action: upsert, from_context: metadata.x-scope-orgid`) stamps it
-as the `tenant.org_id` resource attribute on every span/log/metric; a
-`headers_setter` extension re-emits the same value as an outgoing
-`X-Scope-OrgID` header on the exporters that talk to Tempo/Loki over
-HTTP/gRPC (`auth.authenticator: headers_setter` on the exporter). All three
-collector configs (`trace.yaml`, `log.yaml`, `metric.yaml`) were validated
-with `otelcol-contrib validate --config=...` (exit 0) against the exact
-image pinned in `docker-compose.yml` (`0.145.0`).
+**Why metrics are different (confirmed with the operator 2026-07-11):**
+Tempo and Loki isolate natively by header — once `multitenancy_enabled`/
+`auth_enabled` are on, the header alone is the enforcement boundary, and
+baking `tenant.org_id` into the span/log payload is redundant (it doesn't
+add isolation, only rides along as dead weight, and needlessly puts tenant
+identity into data-plane storage that a "pure" separation of concerns would
+keep out of). `trace.yaml`/`log.yaml` were corrected to stop stamping it —
+`resource/tenant` was removed from both. `metric.yaml` is the **one
+exception**, and stays, because Prometheus has no header-based mechanism at
+all — the attribute-turned-label *is* the entire enforcement path, not a
+redundant convenience.
+
+**A subtlety this surfaced:** `trace-otel-enrichment`'s spanmetrics/
+servicegraph connectors derive RED metrics from spans and forward them to
+`metric-otel-enrichment` over an internal collector-to-collector gRPC hop
+(port `14317`, no nginx in between). Removing the attribute from trace data
+would have silently stripped tenant labeling from every span-derived metric
+too. Fixed by forwarding `X-Scope-OrgID` as gRPC metadata on that internal
+hop as well (`trace.yaml`'s `otlp_grpc/metric` exporter also gets
+`auth.authenticator: headers_setter`), with `metric-otel-enrichment`'s
+`otlp/trace` receiver (`include_metadata: true`) and `resource/tenant`
+processor (now included in the `metrics/otlp` pipeline too) picking it back
+up there. So metrics — whether sent directly by an agent or derived from a
+trace — are tenant-labeled the same way; traces/logs never carry the
+attribute at all.
+
+Collector wiring detail: `otlp` receivers set `include_metadata: true` so
+the inbound `X-Scope-OrgID` is reachable in-context as
+`metadata.x-scope-orgid`. In `trace.yaml`/`log.yaml`, only a `headers_setter`
+extension consumes it, re-emitting it as an outgoing `X-Scope-OrgID` header
+(`auth.authenticator: headers_setter` on the Tempo/Loki exporters — and, in
+trace.yaml, on the internal metric-forwarding exporter too). In `metric.yaml`
+alone, a `resource/tenant` processor (`action: upsert, from_context:
+metadata.x-scope-orgid`) additionally stamps it as the `tenant.org_id`
+resource attribute, on both metrics pipelines. All three collector configs
+(`trace.yaml`, `log.yaml`, `metric.yaml`) were re-validated with
+`otelcol-contrib validate --config=...` (exit 0) against the exact image
+pinned in `docker-compose.yml` (`0.145.0`) after this correction.
 
 ---
 
@@ -335,12 +368,12 @@ Additive screens in the existing vanilla-JS SPA:
 
 **Phase 2 — Ingest/query wiring — ✅ Implemented (opt-in cutover)**
 - ✅ nginx `auth_request_set` OrgID injection on all `/ingest/*` and `/query/*` locations (both :80 and :443), validated with `nginx -t`.
-- ✅ OTLP collectors (`trace.yaml`, `log.yaml`) stamp `tenant.org_id` and forward `X-Scope-OrgID` to Tempo/Loki via the `headers_setter` extension, validated with `otelcol-contrib validate`.
+- ✅ OTLP collectors (`trace.yaml`, `log.yaml`) forward `X-Scope-OrgID` to Tempo/Loki via the `headers_setter` extension (no attribute stamped into span/log data — corrected 2026-07-11, see §8), validated with `otelcol-contrib validate`.
 - ✅ Loki `auth_enabled` / Tempo `multitenancy_enabled` toggles are in place in the templates, defaulted `false` with an explicit cutover note (§14) rather than force-enabled, to avoid breaking existing zero-config installs mid-upgrade.
 - ⏳ Node-lock binding + short-lived token renewal (license-design Phase 2) — **not implemented**; `binding` is accepted/stored as a claim but not enforced against host fingerprint. Tracked as follow-up.
 
 **Phase 3 — Metrics tenancy & SaaS — ✅ Implemented (opt-in cutover)**
-- ✅ `metric-otel-enrichment` stamps `tenant.org_id`, which its existing `resource_to_telemetry_conversion` turns into a `tenant_org_id` Prometheus label automatically.
+- ✅ `metric-otel-enrichment` stamps `tenant.org_id` (the one place in the platform that does — see §8), which its existing `resource_to_telemetry_conversion` turns into a `tenant_org_id` Prometheus label automatically, for both directly-sent and span-derived metrics.
 - ✅ `metrics-tenancy-proxy` (prom-label-proxy) added to `docker-compose.yml`, enforcing `tenant_org_id` from `X-Scope-OrgID`; opt-in via nginx upstream swap (§14).
 - ✅ Online license heartbeat (`checkRevocationHeartbeat`, config-gated via `LICENSE_HEARTBEAT_URL`) — off by default, soft-fails on any network error, only an explicit `{revoked:true}` response restricts.
 - ⏳ Usage telemetry beyond the heartbeat payload (tenant/subtenant counts) and a full hybrid-mode UX — **not implemented**; the heartbeat is the minimal SaaS-ready hook, not a full telemetry pipeline.
@@ -369,6 +402,20 @@ Additive screens in the existing vanilla-JS SPA:
 ---
 
 ## 14. Operator runbook: graduating to enforced multitenancy
+
+**Demo consequence of the §8 correction (2026-07-11):** before the fix,
+`{ resource.tenant.org_id = "..." }` worked as a Grafana/TraceQL/LogQL
+filter for traces and logs even with `auth_enabled`/`multitenancy_enabled`
+still `false` (steps 1-4 below not yet done) — useful for showing
+per-tenant separation in a demo before the real cutover. That filter **no
+longer works for traces/logs** now that the attribute isn't stamped into
+the data at all. To demo tenant separation for traces/logs pre-cutover,
+either (a) do steps 1-4 for real and let Tempo/Loki's own storage-level
+isolation show it (a scoped API key's queries simply won't return other
+tenants' data), or (b) filter by `service.name` / another attribute your
+demo data already carries. Metrics are unaffected — `tenant_org_id` is
+still a real label there and still filterable in Grafana/PromQL exactly as
+before.
 
 **Step 0 is no longer optional.** As of §16.0, `make up` with no license
 installed rejects every OTLP request (traces/logs/metrics) with `403`. A

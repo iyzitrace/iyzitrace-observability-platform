@@ -5,6 +5,12 @@ receivers:
         endpoint: 0.0.0.0:14317
         max_recv_msg_size_mib: 4
         max_concurrent_streams: 100
+        # trace-otel-enrichment forwards X-Scope-OrgID as gRPC metadata on
+        # this internal hop (via its own headers_setter) so span-derived
+        # metrics (spanmetrics/servicegraph) can still be tenant-labeled
+        # here, even though the span data itself no longer carries
+        # tenant.org_id — see resource/tenant below.
+        include_metadata: true
   otlp:
     protocols:
       grpc:
@@ -12,10 +18,10 @@ receivers:
         max_recv_msg_size_mib: 4
         max_concurrent_streams: 100
         # Exposes incoming metadata (incl. X-Scope-OrgID) via request
-        # context. Prometheus/Thanos have no native tenant header (unlike
-        # Loki/Tempo) — this only stamps the resource attribute for now;
-        # Phase 3 adds the label-enforcement layer that consumes it. See
-        # docs/architecture/multitenancy-licensing.md §8.
+        # context for resource/tenant below. Prometheus/Thanos have no
+        # native tenant header (unlike Loki/Tempo) — metrics-tenancy-proxy
+        # (docker-compose.yml) enforces the resulting label at query time.
+        # See docs/architecture/multitenancy-licensing.md §8.
         include_metadata: true
       http:
         endpoint: 0.0.0.0:4318
@@ -72,12 +78,17 @@ processors:
         value: metrics
         action: upsert
 
-  # Multitenancy — stamps X-Scope-OrgID from client metadata for metrics
-  # sent directly by agents (via nginx). NOT used on the metrics/otlp
-  # pipeline: those datapoints arrive from trace-otel-enrichment's
-  # spanmetrics/servicegraph connectors over an internal collector-to-
-  # collector hop with no nginx-forwarded metadata — they already carry
-  # tenant.org_id as a resource attribute set upstream in trace.yaml.
+  # Multitenancy — the ONLY place in the platform that stamps tenant.org_id
+  # as a resource attribute baked into telemetry data. Necessary here (and
+  # only here): Prometheus/Thanos have no native per-tenant header support
+  # (unlike Loki/Tempo, which isolate by X-Scope-OrgID natively and so no
+  # longer get this attribute — see trace.yaml/log.yaml). Once stamped,
+  # the existing `resource_to_telemetry_conversion` on the
+  # prometheusremotewrite exporter below turns it into a `tenant_org_id`
+  # metric label, which metrics-tenancy-proxy (docker-compose.yml) enforces
+  # at query time. Used on BOTH metrics pipelines: directly-sent agent
+  # metrics (via nginx metadata) and span-derived spanmetrics/servicegraph
+  # metrics (via the internal header forward from trace-otel-enrichment).
   resource/tenant:
     attributes:
       - key: tenant.org_id
@@ -124,7 +135,7 @@ service:
   pipelines:
     metrics/otlp:
       receivers: [otlp/trace]
-      processors: [memory_limiter, resource/add_collector, metricstransform, transform/promote_resource_attrs, batch]
+      processors: [memory_limiter, resource/tenant, resource/add_collector, metricstransform, transform/promote_resource_attrs, batch]
       exporters: [prometheusremotewrite, otlp_grpc/inventory]
     metrics/prometheus:
       receivers: [otlp]

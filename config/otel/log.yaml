@@ -6,7 +6,10 @@ receivers:
         max_recv_msg_size_mib: 4
         max_concurrent_streams: 100
         # Exposes incoming metadata (incl. X-Scope-OrgID) via request
-        # context — see docs/architecture/multitenancy-licensing.md §7-8.
+        # context, so the headers_setter extension below can re-emit it as
+        # an outgoing header to Loki (which isolates natively by header —
+        # no attribute needs to be stamped into the log data itself; see
+        # docs/architecture/multitenancy-licensing.md §7-8).
         include_metadata: true
       http:
         endpoint: 0.0.0.0:4318
@@ -87,14 +90,6 @@ processors:
         value: logs
         action: upsert
 
-  # Multitenancy — stamps the X-Scope-OrgID captured from client metadata
-  # onto every log record as a resource attribute.
-  resource/tenant:
-    attributes:
-      - key: tenant.org_id
-        action: upsert
-        from_context: metadata.x-scope-orgid
-
   transform/log:
     error_mode: ignore
     log_statements:
@@ -129,7 +124,7 @@ service:
   pipelines:
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, resource/tenant, resource/add_collector, groupbyattrs, transform/log, batch]
+      processors: [memory_limiter, resource/add_collector, groupbyattrs, transform/log, batch]
       exporters: [otlp_http, otlp_grpc/inventory]
     metrics:
       receivers: [otlp]
